@@ -1,0 +1,9 @@
+device_type=cisco_ios
+username=admin
+password=admin
+---
+show version
+show ip interface brief
+show interfaces status
+show vlan id {vlan}
+show mac address-table | include {client_ip}

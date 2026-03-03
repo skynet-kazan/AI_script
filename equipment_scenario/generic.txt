@@ -1,0 +1,10 @@
+device_type=linux
+username=root
+password=root
+---
+echo "Model: {model}"
+echo "Equipment IP: {equipment_ip}"
+echo "Client IP: {client_ip}"
+echo "VLAN: {vlan}"
+echo "Port: {port}"
+uname -a

@@ -1,6 +1,0 @@
-device_type=cisco_ios
-username=MatBey.S
-password=leMUR567knife
----
-@cisco_arp_clear_then_show
-ping {client_ip} repeat 5
