@@ -62,7 +62,7 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
 
         print(f"From {addr}: running diagnostics equipment={equipment_ip} router={router_ip or '-'}")
 
-        _, out_path = run_diagnostics(
+        full_output, out_path = run_diagnostics(
             model=model,
             equipment_ip=equipment_ip,
             client_ip=client_ip,
@@ -71,7 +71,8 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
             router_model=router_model,
             router_ip=router_ip,
         )
-        conn.sendall(f"OK: Diagnostics completed. File on server: {out_path}\n".encode())
+        conn.sendall(b"OK\n")
+        conn.sendall(full_output.encode("utf-8"))
     except FileNotFoundError as e:
         conn.sendall(f"ERROR: {e}\n".encode())
         print(f"Error with {addr}: {e}", file=sys.stderr)

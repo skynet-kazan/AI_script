@@ -18,6 +18,17 @@ def _read_line(sock: socket.socket, bufsize: int = 4096) -> str:
     return line[0].strip() if line else ""
 
 
+def _read_rest(sock: socket.socket, bufsize: int = 65536) -> str:
+    """Читает из сокета всё до закрытия соединения."""
+    chunks = []
+    while True:
+        data = sock.recv(bufsize)
+        if not data:
+            break
+        chunks.append(data)
+    return b"".join(chunks).decode("utf-8", errors="replace")
+
+
 def main() -> None:
     """
     Клиент диагностики: подключается к серверу, вводит параметры диагностики,
@@ -64,8 +75,9 @@ def main() -> None:
             response = _read_line(sock)
             if not response:
                 print("Server closed the connection.")
-            elif response.startswith("OK:"):
-                print(response)
+            elif response == "OK":
+                content = _read_rest(sock)
+                print(content)
             else:
                 print(f"Ошибка: {response}", file=sys.stderr)
         except KeyboardInterrupt:
