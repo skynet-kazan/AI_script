@@ -3,6 +3,7 @@
    - device_type = тип Netmiko (cisco_ios, huawei, linux, juniper_junos и т.д.)
    - username = логин SSH
    - password = пароль SSH
+   - secret = пароль enable (опционально; для cisco_ios и др., если устройство запрашивает)
 2) После "---": по одной команде на строку.
 
 В командах можно использовать плейсхолдеры:

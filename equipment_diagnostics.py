@@ -116,11 +116,12 @@ def _run_device_diagnostics(
     device_type = credentials.get("device_type", "linux")
     username = credentials.get("username", "")
     password = credentials.get("password", "")
+    secret = credentials.get("secret", "")
 
     run_params = {**params, "model": model}
     commands = [_substitute_params(cmd, run_params) for cmd in raw_commands]
 
-    device = {
+    device: dict[str, Any] = {
         "device_type": device_type,
         "host": host,
         "username": username,
@@ -128,6 +129,8 @@ def _run_device_diagnostics(
         "port": 22,
         "global_delay_factor": 2,
     }
+    if secret:
+        device["secret"] = secret
 
     full_output_lines: list[str] = []
     full_output_lines.append(f"=== {model} | {host} | {datetime.now().isoformat()} ===\n")
