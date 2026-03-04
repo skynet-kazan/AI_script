@@ -3,10 +3,11 @@ username=admin
 password=611621Skynet
 ---
 sh mac-address-table l2 vlan {vlan}
+int port {port}
+shutdown
+no shutdown
 sh int port {port}
 sh int port {port} st
 sh mac-address-table l2 port {port}
 sh logging file | include "port {port}"
-int port {port}
-shutdown
-no shutdown
+
