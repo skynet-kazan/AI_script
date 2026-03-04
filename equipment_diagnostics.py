@@ -126,10 +126,15 @@ def _run_device_diagnostics(
         "username": username,
         "password": password,
         "port": 22,
+        "global_delay_factor": 2,
     }
 
     full_output_lines: list[str] = []
     full_output_lines.append(f"=== {model} | {host} | {datetime.now().isoformat()} ===\n")
+
+    # Для Raisecom после "int port" приглашение (config-port)#, а не только host# — задаём гибкий expect_string
+    expect_flexible = device_type == "raisecom_roap"
+    expect_string = r'[\w\.\-]+#|\(\w+[^)]*\)#' if expect_flexible else None
 
     with ConnectHandler(**device) as conn:
         for cmd in commands:
@@ -137,7 +142,10 @@ def _run_device_diagnostics(
                 _run_cisco_arp_clear_then_show(conn, run_params, full_output_lines, read_timeout=read_timeout)
                 continue
             full_output_lines.append(f"\n--- Команда: {cmd} ---\n")
-            out = conn.send_command(cmd, read_timeout=read_timeout)
+            kwargs = {"read_timeout": read_timeout}
+            if expect_string:
+                kwargs["expect_string"] = expect_string
+            out = conn.send_command(cmd, **kwargs)
             full_output_lines.append(out)
 
     return full_output_lines
