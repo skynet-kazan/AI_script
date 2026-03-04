@@ -1,7 +1,7 @@
 """
 Модуль диагностики оборудования по SSH.
 Читает сценарии из папки equipment_scenario, подставляет параметры, выполняет команды,
-возвращает полный вывод в текстовый файл в текущей директории.
+возвращает полный вывод в текстовый файл в папку diagnostics_output (рядом с equipment_scenario).
 """
 from __future__ import annotations
 
@@ -14,7 +14,9 @@ from netmiko import ConnectHandler
 from netmiko.exceptions import NetmikoAuthenticationException, NetmikoTimeoutException
 
 
-SCENARIO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "equipment_scenario")
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SCENARIO_DIR = os.path.join(_SCRIPT_DIR, "equipment_scenario")
+OUTPUT_DIR = os.path.join(_SCRIPT_DIR, "diagnostics_output")
 
 
 def _parse_scenario(path: str) -> tuple[dict[str, str], list[str]]:
@@ -160,7 +162,7 @@ def run_diagnostics(
     :param client_ip: IP клиента
     :param client_vlan: VLAN клиента
     :param port: порт на оборудовании
-    :param output_dir: директория для файла вывода (по умолчанию — текущая)
+    :param output_dir: директория для файла вывода (по умолчанию — diagnostics_output)
     :param router_model: модель маршрутизатора (имя сценария без .txt); при пустом — только оборудование
     :param router_ip: IP или хост маршрутизатора
     :return: (полный текст вывода, путь к сохранённому файлу)
@@ -196,7 +198,8 @@ def run_diagnostics(
 
     full_output = "\n".join(all_lines)
 
-    out_dir = output_dir or os.getcwd()
+    out_dir = output_dir or OUTPUT_DIR
+    os.makedirs(out_dir, exist_ok=True)
     safe_equipment = equipment_ip.replace(".", "_")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if router_model and router_ip:
