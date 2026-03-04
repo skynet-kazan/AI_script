@@ -34,24 +34,31 @@ def _read_line(conn: socket.socket, bufsize: int = 4096) -> str:
     return line[0].strip() if line else ""
 
 
+def _send_response(conn: socket.socket, msg: bytes, addr: Tuple[str, int]) -> None:
+    try:
+        conn.sendall(msg)
+    except (BrokenPipeError, ConnectionResetError, OSError) as e:
+        print(f"[{addr}] Не удалось отправить ответ клиенту: {e}", file=sys.stderr)
+
+
 def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
-    print(f"Connected by {addr}")
+    print(f"[{addr}] Подключение.")
     try:
         line = _read_line(conn)
         if not line:
-            conn.sendall(b"ERROR: No data received\n")
+            print(f"[{addr}] Пустой запрос.")
+            _send_response(conn, b"ERROR: No data received\n", addr)
             return
 
         parts = [p.strip() for p in line.split(",")]
         while len(parts) < NUM_PARAMS:
             parts.append("")
         lines = parts[:NUM_PARAMS]
-
         params = dict(zip(PARAM_NAMES, lines))
         model = params["model"] or "generic"
         equipment_ip = params["equipment_ip"]
         if not equipment_ip:
-            conn.sendall(b"ERROR: equipment_ip is required\n")
+            _send_response(conn, b"ERROR: equipment_ip is required\n", addr)
             return
 
         router_model = params["router_model"].strip() or None
@@ -60,7 +67,8 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
         client_vlan = params["client_vlan"] or "-"
         port = params["port"] or "-"
 
-        print(f"From {addr}: running diagnostics equipment={equipment_ip} router={router_ip or '-'}")
+        print(f"[{addr}] Подключение успешно. Параметры: equipment={equipment_ip}, router={router_ip or '-'}")
+        print(f"[{addr}] Запуск диагностики...")
 
         full_output, out_path = run_diagnostics(
             model=model,
@@ -71,20 +79,25 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
             router_model=router_model,
             router_ip=router_ip,
         )
-        conn.sendall(b"OK\n")
-        conn.sendall(full_output.encode("utf-8"))
+
+        print(f"[{addr}] Диагностика завершена. Отправка ответа клиенту ({len(full_output)} символов).")
+        _send_response(conn, b"OK\n", addr)
+        _send_response(conn, full_output.encode("utf-8"), addr)
     except FileNotFoundError as e:
-        conn.sendall(f"ERROR: {e}\n".encode())
-        print(f"Error with {addr}: {e}", file=sys.stderr)
+        print(f"[{addr}] Ошибка: {e}", file=sys.stderr)
+        _send_response(conn, f"ERROR: {e}\n".encode(), addr)
     except (NetmikoAuthenticationException, NetmikoTimeoutException) as e:
-        conn.sendall(f"ERROR: SSH: {e}\n".encode())
-        print(f"Error with {addr}: {e}", file=sys.stderr)
+        print(f"[{addr}] Ошибка SSH: {e}", file=sys.stderr)
+        _send_response(conn, f"ERROR: SSH: {e}\n".encode(), addr)
     except Exception as exc:
-        conn.sendall(f"ERROR: {exc}\n".encode())
-        print(f"Error with {addr}: {exc}", file=sys.stderr)
+        print(f"[{addr}] Ошибка: {exc}", file=sys.stderr)
+        _send_response(conn, f"ERROR: {exc}\n".encode(), addr)
     finally:
-        print(f"Connection closed: {addr}")
-        conn.close()
+        print(f"[{addr}] Соединение закрыто.")
+        try:
+            conn.close()
+        except OSError:
+            pass
 
 
 def start_server(host: str = HOST, port: int = PORT) -> None:

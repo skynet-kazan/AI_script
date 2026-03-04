@@ -142,13 +142,18 @@ def _run_device_diagnostics(
     expect_flexible = device_type == "raisecom_roap"
     expect_string = r'\S+[>#]\s*$|\(\w+[^)]*\)#\s*$' if expect_flexible else None
 
+    print(f"  [{host}] Подключение к устройству...")
     with ConnectHandler(**device) as conn:
+        print(f"  [{host}] Подключение успешно.")
         if use_timing:
             time.sleep(2)
-        for cmd in commands:
+        for i, cmd in enumerate(commands):
             if cmd.strip() == "@cisco_arp_clear_then_show":
+                print(f"  [{host}] Команда: @cisco_arp_clear_then_show")
                 _run_cisco_arp_clear_then_show(conn, run_params, full_output_lines, read_timeout=read_timeout)
+                print(f"  [{host}] Результат: макрос выполнен.")
                 continue
+            print(f"  [{host}] Команда: {cmd}")
             full_output_lines.append(f"\n--- Команда: {cmd} ---\n")
             if use_timing:
                 out = conn.send_command_timing(
@@ -166,6 +171,7 @@ def _run_device_diagnostics(
                     kwargs["delay_factor"] = 2
                 out = conn.send_command(cmd, **kwargs)
             full_output_lines.append(out)
+            print(f"  [{host}] Результат: {len(out)} символов")
 
     return full_output_lines
 
@@ -208,6 +214,7 @@ def run_diagnostics(
     all_lines.append(f"Клиент: {client_ip}  VLAN: {client_vlan}  Порт: {port}\n")
 
     try:
+        print("--- Оборудование ---")
         equipment_lines = _run_device_diagnostics(model, equipment_ip, params, read_timeout=120)
         all_lines.extend(equipment_lines)
 
@@ -216,6 +223,7 @@ def run_diagnostics(
             all_lines.append("=" * 60 + "\n")
             all_lines.append("Маршрутизатор (подписка клиента)\n")
             all_lines.append("=" * 60 + "\n")
+            print("--- Маршрутизатор ---")
             router_params = {**params, "model": router_model}
             router_lines = _run_device_diagnostics(router_model, router_ip, router_params, read_timeout=120)
             all_lines.extend(router_lines)
