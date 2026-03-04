@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import os
-import sys
 import time
 from datetime import datetime
 from typing import Any, Optional
@@ -52,6 +51,7 @@ def _substitute_params(command: str, params: dict[str, Any]) -> str:
     return command
 
 
+# Функция для определения интерфейса на котором подписка клиента
 def _parse_interface_from_cisco_arp(output: str) -> Optional[str]:
     """Из вывода 'sh arp' Cisco берёт интерфейс (последняя колонка первой строки с данными)."""
     for line in output.strip().splitlines():
@@ -66,7 +66,7 @@ def _parse_interface_from_cisco_arp(output: str) -> Optional[str]:
             return last
     return None
 
-
+# Функция макроса проверки арпов, очистки и повторной проверки
 def _run_cisco_arp_clear_then_show(
     conn: Any,
     params: dict[str, Any],
@@ -106,7 +106,7 @@ def _run_device_diagnostics(
     read_timeout: int = 120,
 ) -> list[str]:
     """
-    Подключается к одному устройству (host), выполняет сценарий модели, возвращает список строк вывода.
+    Подключается к одному устройству (host), выполняет сценарий в зависимости от модели, возвращает список строк вывода.
     Не пишет файл. Используется для объединённой диагностики оборудования и маршрутизатора.
     """
     scenario_path = os.path.join(SCENARIO_DIR, f"{model}.txt")
@@ -247,47 +247,3 @@ def run_diagnostics(
 
     print(f"Вывод сохранён: {out_path}")
     return full_output, out_path
-
-# Функция для ручного ввода данных (временная)
-def _read_input(prompt: str, default: str = "") -> str:
-    if default:
-        value = input(f"{prompt} [{default}]: ").strip()
-        return value if value else default
-    return input(f"{prompt}: ").strip()
-
-
-def main() -> None:
-    print("Введите параметры диагностики (пустой ввод — пропуск).\n")
-
-    model = _read_input("Модель конечного оборудования (имя сценария без .txt)", "generic")
-    equipment_ip = _read_input("IP или хост конечного оборудования")
-    router_model = _read_input("Модель маршрутизатора (имя сценария без .txt)")
-    router_ip = _read_input("IP или хост маршрутизатора")
-    client_ip = _read_input("IP клиента")
-    client_vlan = _read_input("VLAN клиента")
-    port = _read_input("Порт на оборудовании")
-
-    if not equipment_ip:
-        print("IP конечного оборудования обязателен.", file=sys.stderr)
-        sys.exit(1)
-
-    try:
-        run_diagnostics(
-            model=model,
-            equipment_ip=equipment_ip,
-            client_ip=client_ip or "-",
-            client_vlan=client_vlan or "-",
-            port=port or "-",
-            router_model=router_model or None,
-            router_ip=router_ip or None,
-        )
-    except FileNotFoundError as e:
-        print(e, file=sys.stderr)
-        sys.exit(1)
-    except (NetmikoAuthenticationException, NetmikoTimeoutException) as e:
-        print(f"Ошибка SSH: {e}", file=sys.stderr)
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
