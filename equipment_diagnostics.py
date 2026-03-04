@@ -135,9 +135,10 @@ def _run_device_diagnostics(
     full_output_lines: list[str] = []
     full_output_lines.append(f"=== {model} | {host} | {datetime.now().isoformat()} ===\n")
 
-    # Для Raisecom после "int port" приглашение (config-port)#, а не только host# — задаём гибкий expect_string
-    expect_flexible = device_type == "raisecom_roap"
-    expect_string = r'[\w\.\-]+#|\(\w+[^)]*\)#' if expect_flexible else None
+    # Гибкий expect_string для устройств, где приглашение бывает > или # или (config-...)#
+    # (Raisecom, SNR/cisco_ios и др. — иначе "Pattern not detected" по строгому host>)
+    expect_flexible = device_type in ("raisecom_roap", "cisco_ios")
+    expect_string = r'[\w\.\-]+[>#]|\(\w+[^)]*\)#' if expect_flexible else None
 
     with ConnectHandler(**device) as conn:
         for cmd in commands:
