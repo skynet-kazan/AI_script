@@ -22,38 +22,30 @@ PARAM_NAMES = (
 NUM_PARAMS = len(PARAM_NAMES)
 
 
-def _read_lines(conn: socket.socket, count: int, bufsize: int = 4096) -> list[str]:
-    """Читает из сокета ровно count строк (до \\n), возвращает список строк без переводов строк."""
-    lines: list[str] = []
+def _read_line(conn: socket.socket, bufsize: int = 4096) -> str:
+    """Читает из сокета одну строку (до \\n)."""
     buf = b""
-    while len(lines) < count:
+    while b"\n" not in buf and b"\r\n" not in buf:
         data = conn.recv(bufsize)
         if not data:
             break
         buf += data
-        while len(lines) < count and (b"\n" in buf or b"\r\n" in buf):
-            idx = buf.find(b"\n")
-            if idx == -1:
-                idx = buf.find(b"\r\n")
-                if idx != -1:
-                    line = buf[:idx].decode(errors="replace").strip()
-                    buf = buf[idx + 2 :]
-                else:
-                    break
-            else:
-                line = buf[:idx].decode(errors="replace").strip()
-                buf = buf[idx + 1 :]
-            lines.append(line)
-    return lines
+    line = buf.decode(errors="replace").splitlines()
+    return line[0].strip() if line else ""
 
 
 def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
     print(f"Connected by {addr}")
     try:
-        lines = _read_lines(conn, NUM_PARAMS)
-        if len(lines) != NUM_PARAMS:
-            conn.sendall(f"ERROR: Expected {NUM_PARAMS} parameters, got {len(lines)}\n".encode())
+        line = _read_line(conn)
+        if not line:
+            conn.sendall(b"ERROR: No data received\n")
             return
+
+        parts = [p.strip() for p in line.split(",")]
+        while len(parts) < NUM_PARAMS:
+            parts.append("")
+        lines = parts[:NUM_PARAMS]
 
         params = dict(zip(PARAM_NAMES, lines))
         model = params["model"] or "generic"
@@ -70,7 +62,7 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
 
         print(f"From {addr}: running diagnostics equipment={equipment_ip} router={router_ip or '-'}")
 
-        _, out_path = run_diagnostics(
+        full_output, out_path = run_diagnostics(
             model=model,
             equipment_ip=equipment_ip,
             client_ip=client_ip,
@@ -79,7 +71,8 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
             router_model=router_model,
             router_ip=router_ip,
         )
-        conn.sendall(f"OK: Diagnostics completed. File on server: {out_path}\n".encode())
+        conn.sendall(b"OK\n")
+        conn.sendall(full_output.encode("utf-8"))
     except FileNotFoundError as e:
         conn.sendall(f"ERROR: {e}\n".encode())
         print(f"Error with {addr}: {e}", file=sys.stderr)
