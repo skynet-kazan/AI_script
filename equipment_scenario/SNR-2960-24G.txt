@@ -1,0 +1,12 @@
+device_type=cisco_ios
+username=admin
+password=admin
+---
+sh int ethernet 1/{port}
+sh mac-address-table vlan {vlan}
+sh mac-address-table int ethernet 1/{port}
+int ethernet 1/{port}
+shutdown
+no shutdown
+exit
+exit
