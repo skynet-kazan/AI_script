@@ -1,6 +1,7 @@
 Формат сценария (TXT):
 1) Секция до "---": параметры подключения (ключ=значение)
-   - device_type = тип Netmiko (cisco_ios, huawei, linux, juniper_junos и т.д.)
+   - device_type = тип Netmiko (cisco_ios, raisecom_roap, raisecom_telnet и т.д.).
+     Для устройств без SSH используйте *_telnet (например raisecom_telnet) — подключение по порту 23.
    - username = логин SSH
    - password = пароль SSH
    - secret = пароль enable (опционально; для cisco_ios и др., если устройство запрашивает)

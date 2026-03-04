@@ -122,12 +122,13 @@ def _run_device_diagnostics(
     run_params = {**params, "model": model}
     commands = [_substitute_params(cmd, run_params) for cmd in raw_commands]
 
+    conn_port = 23 if "telnet" in device_type.lower() else 22
     device: dict[str, Any] = {
         "device_type": device_type,
         "host": host,
         "username": username,
         "password": password,
-        "port": 22,
+        "port": conn_port,
         "global_delay_factor": 2,
     }
     if secret:
@@ -139,7 +140,7 @@ def _run_device_diagnostics(
     # cisco_ios (SNR и др.): не полагаемся на приглашение — читаем по таймеру (send_command_timing)
     # raisecom_roap: гибкий expect_string с привязкой к концу строки ($), чтобы не срабатывать на # в тексте
     use_timing = device_type == "cisco_ios"
-    expect_flexible = device_type == "raisecom_roap"
+    expect_flexible = device_type in ("raisecom_roap", "raisecom_telnet")
     expect_string = r'\S+[>#]\s*$|\(\w+[^)]*\)#\s*$' if expect_flexible else None
 
     print(f"  [{host}] Подключение к устройству...")
@@ -167,7 +168,7 @@ def _run_device_diagnostics(
                 kwargs = {"read_timeout": read_timeout}
                 if expect_string:
                     kwargs["expect_string"] = expect_string
-                if device_type == "raisecom_roap":
+                if device_type in ("raisecom_roap", "raisecom_telnet"):
                     kwargs["delay_factor"] = 2
                 out = conn.send_command(cmd, **kwargs)
             full_output_lines.append(out)

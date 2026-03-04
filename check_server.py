@@ -11,7 +11,7 @@ HOST = "10.3.1.147"
 PORT = 5000
 
 # Стандартный тестовый запрос (модель оборудования, IP оборудования, модель роутера, хост роутера, IP клиента, VLAN, порт)
-DEFAULT_REQUEST = "SNR-S2960-24G, 10.135.2.137, cisco_asr1002, shv-1002.loc, 172.200.138.251, 1549, 6"
+DEFAULT_REQUEST = "ISCOM2110EA-MA, 10.143.2.30, cisco_asr1002, 	chu.loc, 91.225.78.246, 1624, 1"
 
 
 def _read_line(sock: socket.socket, bufsize: int = 4096) -> str:
