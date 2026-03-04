@@ -1,6 +1,6 @@
 device_type=cisco_ios
-username=admin
-password=admin
+username=MatBey.S
+password=leMUR567knife
 ---
 sh int ethernet 1/{port}
 sh mac-address-table vlan {vlan}
