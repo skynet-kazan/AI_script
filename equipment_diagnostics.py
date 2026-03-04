@@ -137,17 +137,19 @@ def _run_device_diagnostics(
     full_output_lines: list[str] = []
     full_output_lines.append(f"=== {model} | {host} | {datetime.now().isoformat()} ===\n")
 
-    # cisco_ios (SNR и др.): не полагаемся на приглашение — читаем по таймеру (send_command_timing)
-    # raisecom_roap: гибкий expect_string с привязкой к концу строки ($), чтобы не срабатывать на # в тексте
-    use_timing = device_type == "cisco_ios"
-    expect_flexible = device_type in ("raisecom_roap", "raisecom_telnet")
+    # Режим по таймеру (send_command_timing): для cisco_ios и raisecom_telnet — вывод может идти долго, не ждём приглашение
+    use_timing = device_type in ("cisco_ios", "raisecom_telnet")
+    # Увеличенный таймаут для Telnet Raisecom (MAC-таблица по vlan/port отдаётся очень долго)
+    if device_type == "raisecom_telnet":
+        read_timeout = max(read_timeout, 300)
+    expect_flexible = device_type == "raisecom_roap"
     expect_string = r'\S+[>#]\s*$|\(\w+[^)]*\)#\s*$' if expect_flexible else None
 
     print(f"  [{host}] Подключение к устройству...")
     with ConnectHandler(**device) as conn:
         print(f"  [{host}] Подключение успешно.")
         if use_timing:
-            time.sleep(2)
+            time.sleep(2 if device_type == "cisco_ios" else 1)
         for i, cmd in enumerate(commands):
             if cmd.strip() == "@cisco_arp_clear_then_show":
                 print(f"  [{host}] Команда: @cisco_arp_clear_then_show")
@@ -157,9 +159,10 @@ def _run_device_diagnostics(
             print(f"  [{host}] Команда: {cmd}")
             full_output_lines.append(f"\n--- Команда: {cmd} ---\n")
             if use_timing:
+                last_read = 3.0 if device_type == "raisecom_telnet" else 2.5
                 out = conn.send_command_timing(
                     cmd,
-                    last_read=2.5,
+                    last_read=last_read,
                     read_timeout=read_timeout,
                     strip_prompt=False,
                     strip_command=False,
