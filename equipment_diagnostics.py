@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from datetime import datetime
 from typing import Any, Optional
 
@@ -135,23 +136,35 @@ def _run_device_diagnostics(
     full_output_lines: list[str] = []
     full_output_lines.append(f"=== {model} | {host} | {datetime.now().isoformat()} ===\n")
 
-    # Гибкий expect_string: приглашение может быть host>, host#, (config-...)#
-    # Более широкий паттерн \S+[>#] чтобы SNR и др. не давали "Pattern not detected"
-    expect_flexible = device_type in ("raisecom_roap", "cisco_ios")
-    expect_string = r'\S+[>#]|\(\w+[^)]*\)#' if expect_flexible else None
+    # cisco_ios (SNR и др.): не полагаемся на приглашение — читаем по таймеру (send_command_timing)
+    # raisecom_roap: гибкий expect_string с привязкой к концу строки ($), чтобы не срабатывать на # в тексте
+    use_timing = device_type == "cisco_ios"
+    expect_flexible = device_type == "raisecom_roap"
+    expect_string = r'\S+[>#]\s*$|\(\w+[^)]*\)#\s*$' if expect_flexible else None
 
     with ConnectHandler(**device) as conn:
+        if use_timing:
+            time.sleep(2)
         for cmd in commands:
             if cmd.strip() == "@cisco_arp_clear_then_show":
                 _run_cisco_arp_clear_then_show(conn, run_params, full_output_lines, read_timeout=read_timeout)
                 continue
             full_output_lines.append(f"\n--- Команда: {cmd} ---\n")
-            kwargs = {"read_timeout": read_timeout}
-            if expect_string:
-                kwargs["expect_string"] = expect_string
-            if device_type == "cisco_ios":
-                kwargs["delay_factor"] = 2
-            out = conn.send_command(cmd, **kwargs)
+            if use_timing:
+                out = conn.send_command_timing(
+                    cmd,
+                    last_read=2.5,
+                    read_timeout=read_timeout,
+                    strip_prompt=False,
+                    strip_command=False,
+                )
+            else:
+                kwargs = {"read_timeout": read_timeout}
+                if expect_string:
+                    kwargs["expect_string"] = expect_string
+                if device_type == "raisecom_roap":
+                    kwargs["delay_factor"] = 2
+                out = conn.send_command(cmd, **kwargs)
             full_output_lines.append(out)
 
     return full_output_lines
