@@ -155,23 +155,30 @@ def _run_device_diagnostics(
                 continue
             print(f"  [{host}] Команда: {cmd}")
             full_output_lines.append(f"\n--- Команда: {cmd} ---\n")
-            if use_timing:
-                out = conn.send_command_timing(
-                    cmd,
-                    last_read=2.5,
-                    read_timeout=read_timeout,
-                    strip_prompt=False,
-                    strip_command=False,
-                )
-            else:
-                kwargs = {"read_timeout": read_timeout}
-                if expect_string:
-                    kwargs["expect_string"] = expect_string
-                if device_type == "raisecom_roap":
-                    kwargs["delay_factor"] = 2
-                out = conn.send_command(cmd, **kwargs)
-            full_output_lines.append(out)
-            print(f"  [{host}] Результат: {len(out)} символов")
+            try:
+                if use_timing:
+                    out = conn.send_command_timing(
+                        cmd,
+                        last_read=2.5,
+                        read_timeout=read_timeout,
+                        strip_prompt=False,
+                        strip_command=False,
+                    )
+                else:
+                    kwargs = {"read_timeout": read_timeout}
+                    if expect_string:
+                        kwargs["expect_string"] = expect_string
+                    if device_type == "raisecom_roap":
+                        kwargs["delay_factor"] = 2
+                    out = conn.send_command(cmd, **kwargs)
+                full_output_lines.append(out)
+                print(f"  [{host}] Результат: {len(out)} символов")
+            except (OSError, Exception) as e:
+                if "closed" in str(e).lower() or "reset" in str(e).lower():
+                    full_output_lines.append(f"(устройство закрыло соединение после команды: {e})\n")
+                    print(f"  [{host}] Устройство закрыло соединение, выход. ({e})")
+                    break
+                raise
 
     return full_output_lines
 

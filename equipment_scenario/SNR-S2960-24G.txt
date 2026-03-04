@@ -10,4 +10,3 @@ int ethernet 1/{port}
 shutdown
 no shutdown
 exit
-exit
