@@ -3,6 +3,7 @@ username=MatBey.S
 password=leMUR567knife
 ---
 enable
+terminal length 0
 sh int ethernet 1/{port}
 sh int ethernet 1/{port}
 sh mac-address-table vlan {vlan}
