@@ -8,6 +8,7 @@ sh mac-address-table l2 vlan {vlan}
 sh mac-address-table l2 port {port}
 sh int port {port}
 sh int port {port} st
+sh int port {port} st
 conf
 int port {port}
 shutdown

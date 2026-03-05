@@ -4,8 +4,10 @@ password=leMUR567knife
 ---
 enable
 sh int ethernet 1/{port}
+sh int ethernet 1/{port}
 sh mac-address-table vlan {vlan}
 sh mac-address-table int ethernet 1/{port}
+conf
 int ethernet 1/{port}
 shutdown
 no shutdown

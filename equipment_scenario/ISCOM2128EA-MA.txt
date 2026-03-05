@@ -8,6 +8,7 @@ shutdown
 no shutdown
 sh int port {port}
 sh int port {port} st
+sh int port {port} st
 sh mac-address-table l2 port {port}
 sh logging file | include "port {port}"
 
