@@ -19,6 +19,11 @@ SCENARIO_DIR = os.path.join(_SCRIPT_DIR, "equipment_scenario")
 OUTPUT_DIR = os.path.join(_SCRIPT_DIR, "diagnostics_output")
 
 
+def _model_to_filename(model: str) -> str:
+    """Имя модели (например DES-1228/ME) → безопасное имя файла без / и \\."""
+    return model.replace("/", "_").replace("\\", "_").strip()
+
+
 def _parse_scenario(path: str) -> tuple[dict[str, str], list[str]]:
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
@@ -109,7 +114,7 @@ def _run_device_diagnostics(
     Подключается к одному устройству (host), выполняет сценарий в зависимости от модели, возвращает список строк вывода.
     Не пишет файл. Используется для объединённой диагностики оборудования и маршрутизатора.
     """
-    scenario_path = os.path.join(SCENARIO_DIR, f"{model}.txt")
+    scenario_path = os.path.join(SCENARIO_DIR, f"{_model_to_filename(model)}.txt")
     if not os.path.isfile(scenario_path):
         raise FileNotFoundError(f"Сценарий не найден: {scenario_path}")
 

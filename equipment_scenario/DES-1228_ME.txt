@@ -1,0 +1,10 @@
+device_type=dlink_ds
+username=admin
+password=admin
+---
+show fdb vlan {vlan}
+sh fdb port {port}
+show error ports {port}
+config ports {port} state disable
+config ports {port} state enable
+show ports {port}
