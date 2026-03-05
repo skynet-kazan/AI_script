@@ -1,6 +1,6 @@
 device_type=dlink_ds
 username=admin
-password=admin
+password=611621Skynet
 ---
 show fdb vlan {vlan}
 sh fdb port {port}
