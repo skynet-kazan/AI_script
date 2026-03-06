@@ -1,3 +1,4 @@
+# OLT BDCOM GP3600-04. {port} = ONU (например 0/1:35), {vlan} = VLAN клиента
 device_type=cisco_ios
 username=admin
 password=611621Skynet
