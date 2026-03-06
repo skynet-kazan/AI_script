@@ -7,8 +7,8 @@ import socket
 import sys
 
 
-# По умолчанию — локальный сервер. Хост/порт можно задать: python check_server.py [host] [port] [запрос]
-HOST = "127.0.0.1"
+# Для теста на этой же машине укажите 127.0.0.1
+HOST = "10.3.1.147"
 PORT = 5000
 
 # Стандартный тестовый запрос (модель оборудования, IP оборудования, модель роутера, хост роутера, IP клиента, VLAN, порт)
@@ -76,14 +76,6 @@ def check_server(
         if verbose:
             print("Таймаут ожидания ответа сервера.", file=sys.stderr)
         return False
-    except ConnectionRefusedError:
-        if verbose:
-            print(f"Соединение отклонено: {host}:{port}. Запущен ли сервер? (python server.py)", file=sys.stderr)
-        return False
-    except OSError as e:
-        if verbose:
-            print(f"Ошибка сети: {e}. Проверьте хост {host} и порт {port}.", file=sys.stderr)
-        return False
     except Exception as e:
         if verbose:
             print(f"Ошибка: {e}", file=sys.stderr)
@@ -91,17 +83,12 @@ def check_server(
 
 
 def main() -> None:
-    # Аргументы: [host] [port] [запрос]
-    # Варианты: без аргументов; один аргумент = запрос; два = host port; три = host port запрос
-    args = sys.argv[1:]
-    host, port, request = HOST, PORT, DEFAULT_REQUEST
-    if len(args) >= 2 and args[1].isdigit():
-        host, port = args[0], int(args[1])
-        request = ",".join(args[2:]).strip() or DEFAULT_REQUEST
-    elif len(args) == 1:
-        request = args[0]
-    elif len(args) >= 1:
-        request = ",".join(args).strip() or DEFAULT_REQUEST
+    host = HOST
+    port = PORT
+    if len(sys.argv) >= 2:
+        request = sys.argv[1]
+    else:
+        request = DEFAULT_REQUEST
 
     ok = check_server(host=host, port=port, request=request, verbose=True)
     sys.exit(0 if ok else 1)
