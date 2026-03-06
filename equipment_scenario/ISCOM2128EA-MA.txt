@@ -2,7 +2,8 @@ device_type=raisecom_roap
 username=admin
 password=611621Skynet
 ---
-terminal page-break disable 
+terminal page-break disable
+sh ver
 sh mac-address-table l2 vlan {vlan}
 int port {port}
 shutdown
