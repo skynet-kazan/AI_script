@@ -1,4 +1,3 @@
-# BDCOM GP3600-04 OLT
 device_type=cisco_ios
 username=admin
 password=611621Skynet
