@@ -1,0 +1,15 @@
+# BDCOM GP3600-04 OLT
+device_type=cisco_ios
+username=admin
+password=611621Skynet
+---
+enable
+terminal length 0
+sh ver
+sh int gpoN {port}
+sh gpon int gpoN {port} onu optical-transceiver-diagnosis
+sh gpon optical-transceiver-diagnosis int gpoN {port}
+sh gpon int gpoN {port} onu port 1 st
+sh gpon int gpoN {port} onu basic-info
+sh mac address-table vlan {vlan}
+sh mac address-table int gpoN {port}
