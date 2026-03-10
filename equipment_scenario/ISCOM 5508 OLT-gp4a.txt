@@ -1,9 +1,7 @@
 device_type=raisecom_roap
 username=admin
 password=611621
-secret=611621
 ---
-enable
 sh ver
 sh int gpon-onu {port} online-information
 sh gpon-onu {port} tr
