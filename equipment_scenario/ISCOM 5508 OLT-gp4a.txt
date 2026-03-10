@@ -1,10 +1,7 @@
-# OLT Raisecom ISCOM 5508 OLT-gp4a (ROAP). После enable запрашивает пароль — указать в secret.
-# {port} = ONU ID (например 3/1/5), {vlan} = VLAN клиента.
-# В команде gpon-olt 3/1 при необходимости замените 3/1 на свой слот/порт OLT.
 device_type=raisecom_roap
 username=admin
-password=admin
-secret=admin
+password=611621
+secret=611621
 ---
 enable
 sh int gpon-onu {port} online-information
