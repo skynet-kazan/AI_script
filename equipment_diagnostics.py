@@ -204,6 +204,8 @@ def run_diagnostics(
     :param router_ip: IP или хост маршрутизатора
     :return: (полный текст вывода, путь к сохранённому файлу)
     """
+    # Для OLT: из порта вида 3/1/5 получаем 3/1 (слот/порт OLT) для команд gpon-olt
+    port_olt = port.rsplit("/", 1)[0] if port and port.count("/") >= 2 else (port or "")
     params = {
         "model": model,
         "equipment_ip": equipment_ip,
@@ -211,6 +213,7 @@ def run_diagnostics(
         "client_ip": client_ip,
         "vlan": client_vlan,
         "port": port,
+        "port_olt": port_olt,
     }
 
     all_lines: list[str] = []
