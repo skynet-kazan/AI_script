@@ -1,4 +1,5 @@
 import socket
+import os
 import sys
 import threading
 from typing import Tuple
@@ -49,6 +50,14 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
             print(f"[{addr}] Пустой запрос.")
             _send_response(conn, b"ERROR: No data received\n", addr)
             return
+
+        # Служебная команда для остановки сервера.
+        # Клиент присылает строку "stop" (без запятых).
+        req = line.strip().lower()
+        if req == "stop" or req.startswith("stop,"):
+            print(f"[{addr}] Получена команда stop. Останавливаем процесс сервера.")
+            _send_response(conn, b"OK\n", addr)
+            os._exit(0)
 
         parts = [p.strip() for p in line.split(",")]
         while len(parts) < NUM_PARAMS:
