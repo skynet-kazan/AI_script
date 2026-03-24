@@ -1,0 +1,20 @@
+device_type=raisecom_roap
+username=admin
+password=611621Skynet
+---
+terminal page-break disable
+sh ver
+sh int gigaethernet 1/1/{port}
+sh int gigaethernet 1/1/{port} st
+sh mac-address dynamic vlan {vlan} 
+conf
+int gigaethernet 1/1/{port}
+shutdown
+no shutdown
+exit
+exit
+sh int gigaethernet 1/1/{port}
+sh int gigaethernet 1/1/{port} st
+sh mac-address dynamic vlan {vlan}
+sh mac-address dynamic gigaethernet 1/1/{port}
+sh logging file | include "gigaethernet1/1/{port} "

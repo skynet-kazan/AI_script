@@ -4,13 +4,16 @@ password=611621Skynet
 ---
 terminal page-break disable
 sh ver
+sh int port {port}
+sh int port {port} st
 sh mac-address-table l2 vlan {vlan}
 int port {port}
 shutdown
 no shutdown
+exit
 sh int port {port}
 sh int port {port} st
-sh int port {port} st
+sh mac-address-table l2 vlan {vlan}
 sh mac-address-table l2 port {port}
 sh logging file | include "port {port}"
 

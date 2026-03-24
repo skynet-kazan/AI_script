@@ -2,11 +2,14 @@ device_type=dlink_ds
 username=admin
 password=611621Skynet
 ---
-show fdb vlan {vlan}
-sh fdb port {port}
+show switch
 show ports {port}
 show error ports {port}
-show error ports {port}
+show fdb vlan {vlan}
+show fdb port {port}
 config ports {port} state disable
 config ports {port} state enable
-
+show ports {port}
+show error ports {port}
+show fdb vlan {vlan}
+show fdb port {port}
