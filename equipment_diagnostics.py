@@ -51,20 +51,80 @@ def _substitute_params(command: str, params: dict[str, Any]) -> str:
     return command
 
 
-# Функция для определения интерфейса на котором подписка клиента
-def _parse_interface_from_cisco_arp(output: str) -> Optional[str]:
-    """Из вывода 'sh arp' Cisco берёт интерфейс (последняя колонка первой строки с данными)."""
+def _cisco_arp_line_interface(line: str) -> Optional[str]:
+    """Последняя колонка строки ARP — имя интерфейса (Internet … ARPA <ifname>)."""
+    parts = line.split()
+    if len(parts) < 2:
+        return None
+    if parts[0] == "Protocol":
+        return None
+    last = parts[-1]
+    if "/" in last or "." in last or last.lower().startswith("vlan"):
+        return last
+    return None
+
+
+def _vlan_id_from_cisco_interface(interface: str) -> Optional[str]:
+    """
+    Номер VLAN из имени L3-интерфейса: суффикс после последней точки (Gi0/0/0.625 → 625)
+    или Vlan625 → 625. Для 1625 суффикс 1625, не 625.
+    """
+    if "." in interface:
+        suffix = interface.rsplit(".", 1)[-1]
+        if suffix.isdigit():
+            return str(int(suffix))
+    low = interface.lower()
+    if low.startswith("vlan") and len(interface) > 4:
+        rest = interface[4:]
+        if rest.isdigit():
+            return str(int(rest))
+    return None
+
+
+def _vlan_params_match(vlan_param: str, iface_vlan_id: str) -> bool:
+    v = str(vlan_param).strip()
+    u = str(iface_vlan_id).strip()
+    if not v or not u:
+        return False
+    if v.isdigit() and u.isdigit():
+        return int(v) == int(u)
+    return v == u
+
+
+def _filter_cisco_arp_output_by_vlan(output: str, vlan: str) -> str:
+    """Оставляет только строки ARP, где L3-интерфейс соответствует указанному VLAN."""
+    kept: list[str] = []
     for line in output.strip().splitlines():
         line = line.strip()
         if not line or line.startswith("Protocol"):
             continue
-        parts = line.split()
-        if len(parts) < 2:
+        iface = _cisco_arp_line_interface(line)
+        if not iface:
             continue
-        last = parts[-1]
-        if "/" in last or "." in last:
-            return last
+        vid = _vlan_id_from_cisco_interface(iface)
+        if vid is None:
+            continue
+        if _vlan_params_match(vlan, vid):
+            kept.append(line)
+    return "\n".join(kept)
+
+
+def _parse_interface_from_cisco_arp_for_vlan(output: str, vlan: str) -> Optional[str]:
+    """Первый интерфейс из строк ARP, прошедших фильтр по VLAN."""
+    for line in output.strip().splitlines():
+        line = line.strip()
+        if not line or line.startswith("Protocol"):
+            continue
+        iface = _cisco_arp_line_interface(line)
+        if not iface:
+            continue
+        vid = _vlan_id_from_cisco_interface(iface)
+        if vid is None:
+            continue
+        if _vlan_params_match(vlan, vid):
+            return iface
     return None
+
 
 # Функция макроса проверки арпов, очистки и повторной проверки
 def _run_cisco_arp_clear_then_show(
@@ -73,16 +133,25 @@ def _run_cisco_arp_clear_then_show(
     full_output_lines: list[str],
     read_timeout: int = 120,
 ) -> None:
-    """Выполняет sh arp | include {vlan}; при наличии вывода — 8× clear arp cache int <интерфейс>, затем снова sh arp."""
-    arp_cmd = _substitute_params("sh arp | include {vlan} ", params)
+    """sh arp | include {vlan}; на устройстве — грубый отбор, в отчёт — только строки с точным VLAN на сабинтерфейсе/VlanX."""
+    vlan = str(params.get("client_vlan", "") or params.get("vlan", ""))
+    arp_cmd = _substitute_params("sh arp | include {vlan}", params)
     full_output_lines.append(f"\n--- Команда: {arp_cmd} ---\n")
     out = conn.send_command(arp_cmd, read_timeout=read_timeout)
-    full_output_lines.append(out)
+    filtered = _filter_cisco_arp_output_by_vlan(out, vlan)
+    if filtered.strip():
+        full_output_lines.append(filtered)
+    else:
+        full_output_lines.append(
+            f"(после фильтра по VLAN {vlan} записей нет; "
+            "нужен L3-интерфейс вида *.{{vlan}} или Vlan{vlan})\n"
+        )
 
-    if not out.strip():
+    if not filtered.strip():
+        full_output_lines.append("\n(clear ARP не выполняется)\n")
         return
 
-    interface = _parse_interface_from_cisco_arp(out)
+    interface = _parse_interface_from_cisco_arp_for_vlan(out, vlan)
     if not interface:
         full_output_lines.append("\n(интерфейс из вывода ARP не определён, clear не выполняется)\n")
         return
@@ -96,7 +165,11 @@ def _run_cisco_arp_clear_then_show(
 
     full_output_lines.append(f"\n--- Команда: {arp_cmd} (повторно) ---\n")
     out2 = conn.send_command(arp_cmd, read_timeout=read_timeout)
-    full_output_lines.append(out2)
+    filtered2 = _filter_cisco_arp_output_by_vlan(out2, vlan)
+    if filtered2.strip():
+        full_output_lines.append(filtered2)
+    else:
+        full_output_lines.append(f"(повторный sh arp: после фильтра по VLAN {vlan} записей нет)\n")
 
 
 def _run_device_diagnostics(
