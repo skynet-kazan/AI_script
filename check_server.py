@@ -12,7 +12,7 @@ HOST = "10.3.1.147"
 PORT = 5000
 
 # Стандартный тестовый запрос (модель оборудования, IP оборудования, модель роутера, хост роутера, IP клиента, VLAN, порт)
-DEFAULT_REQUEST = "ZTE C620, 10.164.0.17, cisco_asr1002, mira41.loc, 172.200.21.138, 1907, 1/1/2:4"
+DEFAULT_REQUEST = "stop"
 
 
 def _read_line(sock: socket.socket, bufsize: int = 4096) -> str:

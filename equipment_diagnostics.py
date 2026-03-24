@@ -74,7 +74,7 @@ def _run_cisco_arp_clear_then_show(
     read_timeout: int = 120,
 ) -> None:
     """Выполняет sh arp | include {vlan}; при наличии вывода — 8× clear arp cache int <интерфейс>, затем снова sh arp."""
-    arp_cmd = _substitute_params("sh arp | include {vlan}", params)
+    arp_cmd = _substitute_params("sh arp | include {vlan} ", params)
     full_output_lines.append(f"\n--- Команда: {arp_cmd} ---\n")
     out = conn.send_command(arp_cmd, read_timeout=read_timeout)
     full_output_lines.append(out)
