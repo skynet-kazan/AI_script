@@ -1,4 +1,5 @@
 import socket
+import re
 import os
 import sys
 import threading
@@ -21,6 +22,27 @@ PARAM_NAMES = (
     "port",
 )
 NUM_PARAMS = len(PARAM_NAMES)
+
+def _normalize_router_host(host: str) -> str:
+    """
+    Нормализует хост маршрутизатора, если он приходит с хвостом интерфейса:
+    например: "cher-1002 0/1/0" -> "cher-1002.loc"
+    """
+    h = (host or "").strip()
+    if not h:
+        return ""
+
+    # Отбрасываем всё после первого пробела (хвост "0/1/0").
+    h = h.split()[0].strip()
+    if not h:
+        return ""
+
+    # Если домен уже указан (есть '.'), оставляем как есть.
+    if "." in h:
+        return h
+
+    # Если домена нет — добавляем ".loc" (согласно вашему формату mag-1002.loc).
+    return f"{h}.loc"
 
 
 def _read_line(conn: socket.socket, bufsize: int = 4096) -> str:
@@ -71,7 +93,8 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
             return
 
         router_model = params["router_model"].strip() or None
-        router_ip = params["router_ip"].strip() or None
+        router_ip_raw = params["router_ip"].strip() or ""
+        router_ip = _normalize_router_host(router_ip_raw) or None
         client_ip = params["client_ip"] or "-"
         client_vlan = params["client_vlan"] or "-"
         port = params["port"] or "-"
