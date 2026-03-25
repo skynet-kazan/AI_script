@@ -15,19 +15,35 @@ PORT = 5000
 DEFAULT_REQUEST = "DES 1228/ME, 10.151.0.44, cisco_asr1002, bul.loc, 172.200.54.238, 943, 2"
 
 
-def _read_line(sock: socket.socket, bufsize: int = 4096) -> str:
+def _read_status_line(sock: socket.socket, bufsize: int = 4096) -> tuple[str, bytes]:
+    """
+    Читает одну строку статуса (до \\n / \\r\\n) и возвращает:
+    - строку статуса
+    - "остаток" байт, которые уже пришли в сокет после конца строки статуса
+      (важно, чтобы не потерять начало тела ответа).
+    """
     buf = b""
-    while b"\n" not in buf and b"\r\n" not in buf:
+    while True:
+        # Быстрый поиск разделителя строки в уже накопленном буфере
+        nl = buf.find(b"\n")
+        if nl != -1:
+            # если было \r\n, то отрезаем \r тоже
+            line_end = nl
+            if nl > 0 and buf[nl - 1:nl] == b"\r":
+                line_end = nl - 1
+            status = buf[:line_end].decode(errors="replace").strip()
+            rest = buf[nl + 1:]
+            return status, rest
+
         data = sock.recv(bufsize)
         if not data:
-            break
+            # соединение закрыто, статуса может не быть
+            return (buf.decode(errors="replace").splitlines()[0].strip() if buf else "", b"")
         buf += data
-    line = buf.decode(errors="replace").splitlines()
-    return line[0].strip() if line else ""
 
 
-def _read_rest(sock: socket.socket, bufsize: int = 65536) -> str:
-    chunks = []
+def _read_rest(sock: socket.socket, initial: bytes = b"", bufsize: int = 65536) -> str:
+    chunks: list[bytes] = [initial] if initial else []
     while True:
         data = sock.recv(bufsize)
         if not data:
@@ -57,7 +73,7 @@ def check_server(
             sock.connect((host, port))
             sock.sendall((request.strip() + "\n").encode())
 
-            status = _read_line(sock)
+            status, rest = _read_status_line(sock)
             if not status:
                 if verbose:
                     print("Сервер закрыл соединение без ответа.", file=sys.stderr)
@@ -67,7 +83,7 @@ def check_server(
                     print(f"Ошибка: {status}", file=sys.stderr)
                 return False
 
-            content = _read_rest(sock)
+            content = _read_rest(sock, initial=rest)
             if verbose:
                 print("OK\n")
                 print(content)
