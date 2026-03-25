@@ -147,7 +147,7 @@ def _dlink_port_is_enabled(show_ports_output: str, port: str) -> bool:
 
 
 def _extract_macs_from_fdb_output(output: str) -> set[str]:
-    """Из вывода `show fdb vlan ...` извлекает MAC-адреса и возвращает множество уникальных."""
+    """Из вывода таблицы MAC (fdb / l2) извлекает MAC-адреса и возвращает множество уникальных."""
     dot_mac_re = re.compile(r"\b[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\b")
     colon_mac_re = re.compile(r"\b[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}\b")
     macs: set[str] = set()
@@ -157,6 +157,18 @@ def _extract_macs_from_fdb_output(output: str) -> set[str]:
     for m in colon_mac_re.findall(output):
         macs.add(m.lower())
     return macs
+
+
+def _raisecom_port_link_up_from_st(output: str) -> bool:
+    """По выводу `sh int port <n> st` — порт/линк в состоянии up."""
+    t = output.lower()
+    if re.search(r"link\s*[: ]+\s*up\b", t):
+        return True
+    if "operational" in t and re.search(r"operational\s+\S*\s*up\b", t):
+        return True
+    if "line protocol is up" in t:
+        return True
+    return False
 
 
 # Функция макроса проверки арпов, очистки и повторной проверки
@@ -236,6 +248,9 @@ def _run_device_diagnostics(
     # и FDB успеет обновиться.
     POST_ENABLE_DELAY_SEC = 5
     dlink_port_enabled_for_fdb_loop = False
+    iscom2128_port_up_for_mac_loop = False
+    ISCOM2128_SCENARIO = "ISCOM2128EA-MA"
+    is_iscom2128 = model_for_filename == ISCOM2128_SCENARIO
 
     conn_port = 23 if "telnet" in device_type.lower() else 22
     device: dict[str, Any] = {
@@ -283,15 +298,31 @@ def _run_device_diagnostics(
                 device_type == "dlink_ds"
                 and cmd_lower.startswith("show fdb vlan")
             )
+            is_iscom2128_mac_vlan_cmd = (
+                is_iscom2128
+                and device_type == "raisecom_roap"
+                and cmd_lower.startswith("sh mac-address-table l2 vlan")
+            )
 
             full_output_lines.append(f"\n--- Команда: {cmd} ---\n")
 
-            # Особая логика только для DES: повторять `show fdb vlan` пока не появятся ровно 2 MAC.
-            if is_dlink_fdb_vlan_cmd and dlink_port_enabled_for_fdb_loop:
+            # DES: `show fdb vlan`; ISCOM2128EA-MA: `sh mac-address-table l2 vlan` после перезапуска порта —
+            # раз в секунду до 2 уникальных MAC или 20 итераций; в отчёт только снимок с 2 MAC (как у D-Link).
+            mac_poll_dlink = is_dlink_fdb_vlan_cmd and dlink_port_enabled_for_fdb_loop
+            mac_poll_iscom = is_iscom2128_mac_vlan_cmd and iscom2128_port_up_for_mac_loop
+            if mac_poll_dlink or mac_poll_iscom:
                 last_out = ""
                 final_out = ""
                 for attempt in range(20):
-                    out_i = conn.send_command(cmd, read_timeout=read_timeout)
+                    if mac_poll_dlink:
+                        out_i = conn.send_command(cmd, read_timeout=read_timeout)
+                    else:
+                        out_i = conn.send_command(
+                            cmd,
+                            read_timeout=read_timeout,
+                            expect_string=expect_string,
+                            delay_factor=2,
+                        )
                     last_out = out_i
                     macs = _extract_macs_from_fdb_output(out_i)
                     if len(macs) == 2:
@@ -300,8 +331,10 @@ def _run_device_diagnostics(
                     if attempt < 19:
                         time.sleep(1)
                 out = final_out if final_out else last_out
-                # Сработало один раз — дальнейшие `show fdb vlan` уже без ожиданий.
-                dlink_port_enabled_for_fdb_loop = False
+                if mac_poll_dlink:
+                    dlink_port_enabled_for_fdb_loop = False
+                if mac_poll_iscom:
+                    iscom2128_port_up_for_mac_loop = False
             else:
                 if use_timing:
                     last_read = 3.0 if device_type == "raisecom_telnet" else 2.5
@@ -339,6 +372,51 @@ def _run_device_diagnostics(
                     port_enabled = _dlink_port_is_enabled(check_out, actual_port_value)
 
                 dlink_port_enabled_for_fdb_loop = port_enabled
+
+            # ISCOM2128EA-MA: после `no shutdown` на порту — пауза 5 с, проверка `sh int port X st`,
+            # при необходимости один повтор int/no shut/exit; затем опрос MAC по vlan (см. mac_poll_iscom).
+            if (
+                is_iscom2128
+                and device_type == "raisecom_roap"
+                and cmd_lower == "no shutdown"
+            ):
+                time.sleep(POST_ENABLE_DELAY_SEC)
+                st_cmd = f"sh int port {actual_port_value} st"
+                check_out = conn.send_command(
+                    st_cmd,
+                    read_timeout=read_timeout,
+                    expect_string=expect_string,
+                    delay_factor=2,
+                )
+                port_up = _raisecom_port_link_up_from_st(check_out)
+                if not port_up:
+                    conn.send_command(
+                        f"int port {actual_port_value}",
+                        read_timeout=read_timeout,
+                        expect_string=expect_string,
+                        delay_factor=2,
+                    )
+                    conn.send_command(
+                        "no shutdown",
+                        read_timeout=read_timeout,
+                        expect_string=expect_string,
+                        delay_factor=2,
+                    )
+                    conn.send_command(
+                        "exit",
+                        read_timeout=read_timeout,
+                        expect_string=expect_string,
+                        delay_factor=2,
+                    )
+                    time.sleep(POST_ENABLE_DELAY_SEC)
+                    check_out = conn.send_command(
+                        st_cmd,
+                        read_timeout=read_timeout,
+                        expect_string=expect_string,
+                        delay_factor=2,
+                    )
+                    port_up = _raisecom_port_link_up_from_st(check_out)
+                iscom2128_port_up_for_mac_loop = port_up
 
     return full_output_lines
 
