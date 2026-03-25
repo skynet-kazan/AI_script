@@ -12,7 +12,7 @@ HOST = "10.3.1.147"
 PORT = 5000
 
 # Стандартный тестовый запрос (модель оборудования, IP оборудования, модель роутера, хост роутера, IP клиента, VLAN, порт)
-DEFAULT_REQUEST = "DES 1228/ME, 10.151.0.44, cisco_asr1002, bul.loc, 172.200.54.238, 943, 2"
+DEFAULT_REQUEST = "stop"
 
 
 def _read_status_line(sock: socket.socket, bufsize: int = 4096) -> tuple[str, bytes]:

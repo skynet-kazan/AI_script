@@ -198,6 +198,11 @@ def _run_device_diagnostics(
 
     run_params = {**params, "model": model_for_filename}
     commands = [_substitute_params(cmd, run_params) for cmd in raw_commands]
+    actual_port_value = str(params.get("port", "") or "")
+    # Для части коммутаторов/портов после выключения и последующего включения
+    # требуется пауза, чтобы L2/L3 таблицы и линк успели стабилизироваться.
+    POST_DISABLE_DELAY_SEC = 20
+    disable_seen_for_port_cycle = False
 
     conn_port = 23 if "telnet" in device_type.lower() else 22
     device: dict[str, Any] = {
@@ -234,6 +239,22 @@ def _run_device_diagnostics(
                 print(f"  [{host}] Результат: макрос выполнен.")
                 continue
             print(f"  [{host}] Команда: {cmd}")
+
+            cmd_lower = cmd.strip().lower()
+            disable_triggered = (
+                cmd_lower == "shutdown"
+                or "state disable" in cmd_lower
+                or cmd_lower.startswith("shutdown ")
+            )
+
+            # Команды включения порта после shutdown/disable:
+            # - Cisco: `no shutdown` (обычно без указания номера порта)
+            # - D-Link/прочие: `... state enable ...` (часто с {port} внутри)
+            enable_triggered = (
+                cmd_lower == "no shutdown"
+                or "state enable" in cmd_lower
+            )
+
             full_output_lines.append(f"\n--- Команда: {cmd} ---\n")
             if use_timing:
                 last_read = 3.0 if device_type == "raisecom_telnet" else 2.5
@@ -253,6 +274,17 @@ def _run_device_diagnostics(
                 out = conn.send_command(cmd, **kwargs)
             full_output_lines.append(out)
             print(f"  [{host}] Результат: {len(out)} символов")
+
+            if disable_triggered:
+                disable_seen_for_port_cycle = True
+
+            # Пауза выполняется именно после команды включения (enable) после предыдущего disable.
+            if enable_triggered and disable_seen_for_port_cycle:
+                full_output_lines.append(
+                    f"\n--- Задержка {POST_DISABLE_DELAY_SEC}s после enable (no shutdown/state enable) ---\n"
+                )
+                time.sleep(POST_DISABLE_DELAY_SEC)
+                disable_seen_for_port_cycle = False
 
     return full_output_lines
 
