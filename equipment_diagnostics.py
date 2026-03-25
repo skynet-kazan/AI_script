@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from datetime import datetime
 from typing import Any, Optional
@@ -126,6 +127,38 @@ def _parse_interface_from_cisco_arp_for_vlan(output: str, vlan: str) -> Optional
     return None
 
 
+# --- D-Link helpers (DES 1228/26xx и т.п.) ---
+def _dlink_port_is_enabled(show_ports_output: str, port: str) -> bool:
+    """Определяет по выводу `show ports <port>`, что порт имеет состояние Enabled."""
+    port = str(port).strip()
+    if not port:
+        return False
+
+    # Часто встречается строка вида: "{ 2 [ Enabled ] ... Enabled }"
+    port_re = re.compile(r"\{\s*" + re.escape(port) + r"\b", re.IGNORECASE)
+    for line in show_ports_output.splitlines():
+        if port_re.search(line) and "enabled" in line.lower():
+            if "[ enabled ]" in line.lower() or "enabled" in line.lower():
+                return True
+        # fallback: если формат отличается, но порт и Enabled всё равно рядом
+        if port in line and "Enabled" in line:
+            return True
+    return False
+
+
+def _extract_macs_from_fdb_output(output: str) -> set[str]:
+    """Из вывода `show fdb vlan ...` извлекает MAC-адреса и возвращает множество уникальных."""
+    dot_mac_re = re.compile(r"\b[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\b")
+    colon_mac_re = re.compile(r"\b[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}\b")
+    macs: set[str] = set()
+
+    for m in dot_mac_re.findall(output):
+        macs.add(m.lower())
+    for m in colon_mac_re.findall(output):
+        macs.add(m.lower())
+    return macs
+
+
 # Функция макроса проверки арпов, очистки и повторной проверки
 def _run_cisco_arp_clear_then_show(
     conn: Any,
@@ -199,10 +232,10 @@ def _run_device_diagnostics(
     run_params = {**params, "model": model_for_filename}
     commands = [_substitute_params(cmd, run_params) for cmd in raw_commands]
     actual_port_value = str(params.get("port", "") or "")
-    # Для части коммутаторов/портов после выключения и последующего включения
-    # требуется пауза, чтобы L2/L3 таблицы и линк успели стабилизироваться.
-    POST_DISABLE_DELAY_SEC = 20
-    disable_seen_for_port_cycle = False
+    # Для DES-коммутаторов после `state enable` нужно подождать, пока линк/порт реально поднимется,
+    # и FDB успеет обновиться.
+    POST_ENABLE_DELAY_SEC = 5
+    dlink_port_enabled_for_fdb_loop = False
 
     conn_port = 23 if "telnet" in device_type.lower() else 22
     device: dict[str, Any] = {
@@ -241,50 +274,71 @@ def _run_device_diagnostics(
             print(f"  [{host}] Команда: {cmd}")
 
             cmd_lower = cmd.strip().lower()
-            disable_triggered = (
-                cmd_lower == "shutdown"
-                or "state disable" in cmd_lower
-                or cmd_lower.startswith("shutdown ")
+            is_dlink_enable_cmd = (
+                device_type == "dlink_ds"
+                and cmd_lower.startswith("config ports")
+                and "state enable" in cmd_lower
             )
-
-            # Команды включения порта после shutdown/disable:
-            # - Cisco: `no shutdown` (обычно без указания номера порта)
-            # - D-Link/прочие: `... state enable ...` (часто с {port} внутри)
-            enable_triggered = (
-                cmd_lower == "no shutdown"
-                or "state enable" in cmd_lower
+            is_dlink_fdb_vlan_cmd = (
+                device_type == "dlink_ds"
+                and cmd_lower.startswith("show fdb vlan")
             )
 
             full_output_lines.append(f"\n--- Команда: {cmd} ---\n")
-            if use_timing:
-                last_read = 3.0 if device_type == "raisecom_telnet" else 2.5
-                out = conn.send_command_timing(
-                    cmd,
-                    last_read=last_read,
-                    read_timeout=read_timeout,
-                    strip_prompt=False,
-                    strip_command=False,
-                )
+
+            # Особая логика только для DES: повторять `show fdb vlan` пока не появятся ровно 2 MAC.
+            if is_dlink_fdb_vlan_cmd and dlink_port_enabled_for_fdb_loop:
+                last_out = ""
+                final_out = ""
+                for attempt in range(20):
+                    out_i = conn.send_command(cmd, read_timeout=read_timeout)
+                    last_out = out_i
+                    macs = _extract_macs_from_fdb_output(out_i)
+                    if len(macs) == 2:
+                        final_out = out_i
+                        break
+                    if attempt < 19:
+                        time.sleep(1)
+                out = final_out if final_out else last_out
+                # Сработало один раз — дальнейшие `show fdb vlan` уже без ожиданий.
+                dlink_port_enabled_for_fdb_loop = False
             else:
-                kwargs = {"read_timeout": read_timeout}
-                if expect_string:
-                    kwargs["expect_string"] = expect_string
-                if device_type in ("raisecom_roap", "raisecom_telnet"):
-                    kwargs["delay_factor"] = 2
-                out = conn.send_command(cmd, **kwargs)
+                if use_timing:
+                    last_read = 3.0 if device_type == "raisecom_telnet" else 2.5
+                    out = conn.send_command_timing(
+                        cmd,
+                        last_read=last_read,
+                        read_timeout=read_timeout,
+                        strip_prompt=False,
+                        strip_command=False,
+                    )
+                else:
+                    kwargs = {"read_timeout": read_timeout}
+                    if expect_string:
+                        kwargs["expect_string"] = expect_string
+                    if device_type in ("raisecom_roap", "raisecom_telnet"):
+                        kwargs["delay_factor"] = 2
+                    out = conn.send_command(cmd, **kwargs)
+
             full_output_lines.append(out)
             print(f"  [{host}] Результат: {len(out)} символов")
 
-            if disable_triggered:
-                disable_seen_for_port_cycle = True
+            # После enable проверяем, поднялся ли порт:
+            # если не поднялся — делаем один повтор команды enable, ждём 5 секунд и проверяем снова.
+            if is_dlink_enable_cmd:
+                time.sleep(POST_ENABLE_DELAY_SEC)
+                show_ports_cmd = f"show ports {actual_port_value}"
+                check_out = conn.send_command(show_ports_cmd, read_timeout=read_timeout)
+                port_enabled = _dlink_port_is_enabled(check_out, actual_port_value)
 
-            # Пауза выполняется именно после команды включения (enable) после предыдущего disable.
-            if enable_triggered and disable_seen_for_port_cycle:
-                full_output_lines.append(
-                    f"\n--- Задержка {POST_DISABLE_DELAY_SEC}s после enable (no shutdown/state enable) ---\n"
-                )
-                time.sleep(POST_DISABLE_DELAY_SEC)
-                disable_seen_for_port_cycle = False
+                if not port_enabled:
+                    # повторяем enable (вывод повтора не добавляем в отчёт)
+                    conn.send_command(cmd, read_timeout=read_timeout)
+                    time.sleep(POST_ENABLE_DELAY_SEC)
+                    check_out = conn.send_command(show_ports_cmd, read_timeout=read_timeout)
+                    port_enabled = _dlink_port_is_enabled(check_out, actual_port_value)
+
+                dlink_port_enabled_for_fdb_loop = port_enabled
 
     return full_output_lines
 
