@@ -182,7 +182,11 @@ def _run_device_diagnostics(
     Подключается к одному устройству (host), выполняет сценарий в зависимости от модели, возвращает список строк вывода.
     Не пишет файл. Используется для объединённой диагностики оборудования и маршрутизатора.
     """
-    scenario_path = os.path.join(SCENARIO_DIR, f"{model}.txt")
+    # В TCP запросах модель может содержать символы '/', которые нельзя/неудобно использовать
+    # в имени файла сценария. Стандартизируем: заменяем '/' на '-'.
+    model_for_filename = (model or "").replace("/", "-")
+
+    scenario_path = os.path.join(SCENARIO_DIR, f"{model_for_filename}.txt")
     if not os.path.isfile(scenario_path):
         raise FileNotFoundError(f"Сценарий не найден: {scenario_path}")
 
@@ -192,7 +196,7 @@ def _run_device_diagnostics(
     password = credentials.get("password", "")
     secret = credentials.get("secret", "")
 
-    run_params = {**params, "model": model}
+    run_params = {**params, "model": model_for_filename}
     commands = [_substitute_params(cmd, run_params) for cmd in raw_commands]
 
     conn_port = 23 if "telnet" in device_type.lower() else 22
