@@ -3,7 +3,6 @@ username=admin
 password=611621Skynet
 secret=
 ---
-enable
 terminal page-break disable
 sh ver
 sh int port {port}
