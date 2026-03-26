@@ -171,6 +171,15 @@ def _raisecom_port_link_up_from_st(output: str) -> bool:
     return False
 
 
+def _raisecom_port_link_up_from_interface(output: str) -> bool:
+    """
+    Для моделей вроде ISCOM2624: строка вида
+    'gigaethernet1/1/2 is UP, administrative status is UP'
+    """
+    t = output.lower()
+    return bool(re.search(r"\bis\s+up,\s+administrative status is\s+up\b", t))
+
+
 # Функция макроса проверки арпов, очистки и повторной проверки
 def _run_cisco_arp_clear_then_show(
     conn: Any,
@@ -402,18 +411,22 @@ def _run_device_diagnostics(
                 and cmd_lower == "no shutdown"
             ):
                 time.sleep(POST_ENABLE_DELAY_SEC)
-                st_cmd = (
+                status_cmd = (
                     f"sh int port {actual_port_value} st"
                     if is_iscom2128
-                    else f"sh int gigaethernet 1/1/{actual_port_value} st"
+                    else f"sh int gigaethernet 1/1/{actual_port_value}"
                 )
                 check_out = conn.send_command(
-                    st_cmd,
+                    status_cmd,
                     read_timeout=read_timeout,
                     expect_string=expect_string,
                     delay_factor=2,
                 )
-                port_up = _raisecom_port_link_up_from_st(check_out)
+                port_up = (
+                    _raisecom_port_link_up_from_st(check_out)
+                    if is_iscom2128
+                    else _raisecom_port_link_up_from_interface(check_out)
+                )
                 if not port_up:
                     conn.send_command(
                         (
@@ -439,12 +452,16 @@ def _run_device_diagnostics(
                     )
                     time.sleep(POST_ENABLE_DELAY_SEC)
                     check_out = conn.send_command(
-                        st_cmd,
+                        status_cmd,
                         read_timeout=read_timeout,
                         expect_string=expect_string,
                         delay_factor=2,
                     )
-                    port_up = _raisecom_port_link_up_from_st(check_out)
+                    port_up = (
+                        _raisecom_port_link_up_from_st(check_out)
+                        if is_iscom2128
+                        else _raisecom_port_link_up_from_interface(check_out)
+                    )
                 iscom_port_up_for_mac_loop = port_up
 
     return full_output_lines
