@@ -258,6 +258,9 @@ def _run_device_diagnostics(
     POST_ENABLE_DELAY_SEC = 5
     dlink_port_enabled_for_fdb_loop = False
     iscom_port_up_for_mac_loop = False
+    # Откат ISCOM-специфичной логики (проверки/петель FDB/MAC после no shutdown),
+    # чтобы вернуть поведение к “обычному” исполнению сценариев.
+    ENABLE_ISCOM_MAC_POLLING = False
     ISCOM2128_SCENARIO = "ISCOM2128EA-MA"
     ISCOM2624_SCENARIO = "ISCOM2624G-4GE-AC"
     is_iscom2128 = model_for_filename == ISCOM2128_SCENARIO
@@ -329,7 +332,7 @@ def _run_device_diagnostics(
             # DES: `show fdb vlan`; ISCOM2128EA-MA/ISCOM2624G-4GE-AC: MAC по VLAN после перезапуска порта —
             # раз в секунду до 2 уникальных MAC или 20 итераций; в отчёт только снимок с 2 MAC (как у D-Link).
             mac_poll_dlink = is_dlink_fdb_vlan_cmd and dlink_port_enabled_for_fdb_loop
-            mac_poll_iscom = is_iscom_mac_vlan_cmd and iscom_port_up_for_mac_loop
+            mac_poll_iscom = ENABLE_ISCOM_MAC_POLLING and is_iscom_mac_vlan_cmd and iscom_port_up_for_mac_loop
             if mac_poll_dlink or mac_poll_iscom:
                 last_out = ""
                 final_out = ""
@@ -409,6 +412,7 @@ def _run_device_diagnostics(
                 is_iscom_raisecom_switch
                 and device_type == "raisecom_roap"
                 and cmd_lower == "no shutdown"
+                and ENABLE_ISCOM_MAC_POLLING
             ):
                 time.sleep(POST_ENABLE_DELAY_SEC)
                 status_cmd = (
