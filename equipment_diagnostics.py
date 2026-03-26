@@ -321,10 +321,12 @@ def _run_device_diagnostics(
                     or cmd_lower.startswith("sh mac-address dynamic vlan")
                 )
             )
-            is_iscom2624_dynamic_vlan_cmd = (
+            # На ISCOM2624 команды MAC по dynamic могут отдавать вывод с задержкой.
+            # Снимаем их тайминговым режимом, чтобы Netmiko не “успел” завершить чтение по prompt.
+            is_iscom2624_dynamic_mac_cmd = (
                 is_iscom2624
                 and device_type == "raisecom_roap"
-                and cmd_lower.startswith("sh mac-address dynamic vlan")
+                and cmd_lower.startswith("sh mac-address dynamic")
             )
 
             full_output_lines.append(f"\n--- Команда: {cmd} ---\n")
@@ -359,16 +361,28 @@ def _run_device_diagnostics(
                 if mac_poll_iscom:
                     iscom_port_up_for_mac_loop = False
             else:
-                if is_iscom2624_dynamic_vlan_cmd:
+                if is_iscom2624_dynamic_mac_cmd:
                     # На ISCOM2624 команда может отдавать MAC-таблицу с задержкой;
                     # тайминговый режим надёжнее, чем ожидание prompt.
-                    out = conn.send_command_timing(
-                        cmd,
-                        last_read=3.0,
-                        read_timeout=read_timeout,
-                        strip_prompt=False,
-                        strip_command=False,
-                    )
+                    out = ""
+                    last = ""
+                    # Иногда первая попытка возвращает только шапку (без MAC),
+                    # хотя в CLI MAC уже есть. Делаем несколько попыток и берём
+                    # первый вывод, где появились MAC-адреса.
+                    for attempt in range(3):
+                        last = conn.send_command_timing(
+                            cmd,
+                            last_read=6.0,
+                            read_timeout=read_timeout,
+                            strip_prompt=False,
+                            strip_command=False,
+                        )
+                        if _extract_macs_from_fdb_output(last):
+                            out = last
+                            break
+                        if attempt < 2:
+                            time.sleep(1)
+                    out = out or last
                 elif use_timing:
                     last_read = 3.0 if device_type == "raisecom_telnet" else 2.5
                     out = conn.send_command_timing(
@@ -388,6 +402,14 @@ def _run_device_diagnostics(
 
             full_output_lines.append(out)
             print(f"  [{host}] Результат: {len(out)} символов")
+
+            # На ISCOM2624 после `no shutdown` требуется время на поднятие линка/обновление MAC.
+            if (
+                is_iscom2624
+                and device_type == "raisecom_roap"
+                and cmd_lower == "no shutdown"
+            ):
+                time.sleep(POST_ENABLE_DELAY_SEC)
 
             # После enable проверяем, поднялся ли порт:
             # если не поднялся — делаем один повтор команды enable, ждём 5 секунд и проверяем снова.
