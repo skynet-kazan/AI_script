@@ -248,9 +248,12 @@ def _run_device_diagnostics(
     # и FDB успеет обновиться.
     POST_ENABLE_DELAY_SEC = 5
     dlink_port_enabled_for_fdb_loop = False
-    iscom2128_port_up_for_mac_loop = False
+    iscom_port_up_for_mac_loop = False
     ISCOM2128_SCENARIO = "ISCOM2128EA-MA"
+    ISCOM2624_SCENARIO = "ISCOM2624G-4GE-AC"
     is_iscom2128 = model_for_filename == ISCOM2128_SCENARIO
+    is_iscom2624 = model_for_filename == ISCOM2624_SCENARIO
+    is_iscom_raisecom_switch = is_iscom2128 or is_iscom2624
 
     conn_port = 23 if "telnet" in device_type.lower() else 22
     device: dict[str, Any] = {
@@ -298,18 +301,26 @@ def _run_device_diagnostics(
                 device_type == "dlink_ds"
                 and cmd_lower.startswith("show fdb vlan")
             )
-            is_iscom2128_mac_vlan_cmd = (
-                is_iscom2128
+            is_iscom_mac_vlan_cmd = (
+                is_iscom_raisecom_switch
                 and device_type == "raisecom_roap"
-                and cmd_lower.startswith("sh mac-address-table l2 vlan")
+                and (
+                    cmd_lower.startswith("sh mac-address-table l2 vlan")
+                    or cmd_lower.startswith("sh mac-address dynamic vlan")
+                )
+            )
+            is_iscom2624_dynamic_vlan_cmd = (
+                is_iscom2624
+                and device_type == "raisecom_roap"
+                and cmd_lower.startswith("sh mac-address dynamic vlan")
             )
 
             full_output_lines.append(f"\n--- Команда: {cmd} ---\n")
 
-            # DES: `show fdb vlan`; ISCOM2128EA-MA: `sh mac-address-table l2 vlan` после перезапуска порта —
+            # DES: `show fdb vlan`; ISCOM2128EA-MA/ISCOM2624G-4GE-AC: MAC по VLAN после перезапуска порта —
             # раз в секунду до 2 уникальных MAC или 20 итераций; в отчёт только снимок с 2 MAC (как у D-Link).
             mac_poll_dlink = is_dlink_fdb_vlan_cmd and dlink_port_enabled_for_fdb_loop
-            mac_poll_iscom = is_iscom2128_mac_vlan_cmd and iscom2128_port_up_for_mac_loop
+            mac_poll_iscom = is_iscom_mac_vlan_cmd and iscom_port_up_for_mac_loop
             if mac_poll_dlink or mac_poll_iscom:
                 last_out = ""
                 final_out = ""
@@ -334,9 +345,19 @@ def _run_device_diagnostics(
                 if mac_poll_dlink:
                     dlink_port_enabled_for_fdb_loop = False
                 if mac_poll_iscom:
-                    iscom2128_port_up_for_mac_loop = False
+                    iscom_port_up_for_mac_loop = False
             else:
-                if use_timing:
+                if is_iscom2624_dynamic_vlan_cmd:
+                    # На ISCOM2624 команда может отдавать MAC-таблицу с задержкой;
+                    # тайминговый режим надёжнее, чем ожидание prompt.
+                    out = conn.send_command_timing(
+                        cmd,
+                        last_read=3.0,
+                        read_timeout=read_timeout,
+                        strip_prompt=False,
+                        strip_command=False,
+                    )
+                elif use_timing:
                     last_read = 3.0 if device_type == "raisecom_telnet" else 2.5
                     out = conn.send_command_timing(
                         cmd,
@@ -373,15 +394,19 @@ def _run_device_diagnostics(
 
                 dlink_port_enabled_for_fdb_loop = port_enabled
 
-            # ISCOM2128EA-MA: после `no shutdown` на порту — пауза 5 с, проверка `sh int port X st`,
+            # ISCOM2128EA-MA/ISCOM2624G-4GE-AC: после `no shutdown` на порту — пауза 5 с, проверка статуса,
             # при необходимости один повтор int/no shut/exit; затем опрос MAC по vlan (см. mac_poll_iscom).
             if (
-                is_iscom2128
+                is_iscom_raisecom_switch
                 and device_type == "raisecom_roap"
                 and cmd_lower == "no shutdown"
             ):
                 time.sleep(POST_ENABLE_DELAY_SEC)
-                st_cmd = f"sh int port {actual_port_value} st"
+                st_cmd = (
+                    f"sh int port {actual_port_value} st"
+                    if is_iscom2128
+                    else f"sh int gigaethernet 1/1/{actual_port_value} st"
+                )
                 check_out = conn.send_command(
                     st_cmd,
                     read_timeout=read_timeout,
@@ -391,7 +416,11 @@ def _run_device_diagnostics(
                 port_up = _raisecom_port_link_up_from_st(check_out)
                 if not port_up:
                     conn.send_command(
-                        f"int port {actual_port_value}",
+                        (
+                            f"int port {actual_port_value}"
+                            if is_iscom2128
+                            else f"int gigaethernet 1/1/{actual_port_value}"
+                        ),
                         read_timeout=read_timeout,
                         expect_string=expect_string,
                         delay_factor=2,
@@ -416,7 +445,7 @@ def _run_device_diagnostics(
                         delay_factor=2,
                     )
                     port_up = _raisecom_port_link_up_from_st(check_out)
-                iscom2128_port_up_for_mac_loop = port_up
+                iscom_port_up_for_mac_loop = port_up
 
     return full_output_lines
 
