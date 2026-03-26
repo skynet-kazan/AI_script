@@ -6,7 +6,10 @@ terminal page-break disable
 sh ver
 sh int gigaethernet 1/1/{port}
 sh int gigaethernet 1/1/{port} st
-sh mac-address dynamic vlan {vlan} 
+terminal page-break enable
+sh mac-address dynamic vlan {vlan}
+sh mac-address dynamic gigaethernet 1/1/{port}
+terminal page-break disable
 conf
 int gigaethernet 1/1/{port}
 shutdown
@@ -15,6 +18,6 @@ exit
 exit
 sh int gigaethernet 1/1/{port}
 sh int gigaethernet 1/1/{port} st
+terminal page-break enable
 sh mac-address dynamic vlan {vlan}
 sh mac-address dynamic gigaethernet 1/1/{port}
-sh logging file | include "gigaethernet1/1/{port} "
