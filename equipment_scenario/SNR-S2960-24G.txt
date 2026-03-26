@@ -6,10 +6,13 @@ enable
 terminal length 0
 sh ver
 sh int ethernet 1/{port}
+sh mac-address-table vlan {vlan}
+sh mac-address-table int ethernet 1/{port}
 conf
 int ethernet 1/{port}
 shutdown
 no shutdown
+exit
 exit
 sh int ethernet 1/{port}
 sh mac-address-table vlan {vlan}
