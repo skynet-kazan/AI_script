@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import re
 import time
+import threading
 from datetime import datetime
 from typing import Any, Optional
 
@@ -18,6 +19,23 @@ from netmiko.exceptions import NetmikoAuthenticationException, NetmikoTimeoutExc
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SCENARIO_DIR = os.path.join(_SCRIPT_DIR, "equipment_scenario")
 OUTPUT_DIR = os.path.join(_SCRIPT_DIR, "diagnostics_output")
+_OUTPUT_FILE_LOCK = threading.Lock()
+
+
+def _next_output_filename(out_dir: str) -> str:
+    """
+    Следующее имя лога в формате 10 цифр: 0000000001.txt, 0000000002.txt, ...
+    """
+    max_num = 0
+    for name in os.listdir(out_dir):
+        if not name.endswith(".txt"):
+            continue
+        base = name[:-4]
+        if base.isdigit() and len(base) == 10:
+            n = int(base)
+            if n > max_num:
+                max_num = n
+    return f"{max_num + 1:010d}.txt"
 
 
 def _parse_scenario(path: str) -> tuple[dict[str, str], list[str]]:
@@ -555,13 +573,9 @@ def run_diagnostics(
 
     out_dir = output_dir or OUTPUT_DIR
     os.makedirs(out_dir, exist_ok=True)
-    safe_equipment = equipment_ip.replace(".", "_")
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if router_model and router_ip:
-        safe_router = router_ip.replace(".", "_")
-        out_path = os.path.join(out_dir, f"diagnostics_{safe_equipment}_{safe_router}_{timestamp}.txt")
-    else:
-        out_path = os.path.join(out_dir, f"diagnostics_{safe_equipment}_{timestamp}.txt")
+    with _OUTPUT_FILE_LOCK:
+        filename = _next_output_filename(out_dir)
+        out_path = os.path.join(out_dir, filename)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(full_output)
 

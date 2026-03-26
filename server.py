@@ -111,9 +111,11 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
             router_model=router_model,
             router_ip=router_ip,
         )
+        log_id = os.path.splitext(os.path.basename(out_path))[0]
 
         print(f"[{addr}] Диагностика завершена. Отправка ответа клиенту ({len(full_output)} символов).")
         _send_response(conn, b"OK\n", addr)
+        _send_response(conn, f"{log_id}\n".encode("utf-8"), addr)
         _send_response(conn, full_output.encode("utf-8"), addr)
     except FileNotFoundError as e:
         print(f"[{addr}] Ошибка: {e}", file=sys.stderr)
