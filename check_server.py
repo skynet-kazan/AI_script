@@ -21,24 +21,27 @@ def _read_status_line(sock: socket.socket, bufsize: int = 4096) -> tuple[str, by
     - "остаток" байт, которые уже пришли в сокет после конца строки статуса
       (важно, чтобы не потерять начало тела ответа).
     """
-    buf = b""
+    buf = bytearray()
     while True:
-        # Быстрый поиск разделителя строки в уже накопленном буфере
+        # Поиск разделителя строки в уже накопленном буфере.
         nl = buf.find(b"\n")
         if nl != -1:
             # если было \r\n, то отрезаем \r тоже
             line_end = nl
             if nl > 0 and buf[nl - 1:nl] == b"\r":
                 line_end = nl - 1
-            status = buf[:line_end].decode(errors="replace").strip()
-            rest = buf[nl + 1:]
+            status = bytes(buf[:line_end]).decode(errors="replace").strip()
+            rest = bytes(buf[nl + 1:])
             return status, rest
 
         data = sock.recv(bufsize)
         if not data:
             # соединение закрыто, статуса может не быть
-            return (buf.decode(errors="replace").splitlines()[0].strip() if buf else "", b"")
-        buf += data
+            return (
+                (bytes(buf).decode(errors="replace").splitlines()[0].strip() if buf else ""),
+                b"",
+            )
+        buf.extend(data)
 
 
 def _read_rest(sock: socket.socket, initial: bytes = b"", bufsize: int = 65536) -> str:

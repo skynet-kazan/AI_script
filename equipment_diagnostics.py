@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import os
-import re
 import time
 import threading
 from datetime import datetime
@@ -14,6 +13,24 @@ from typing import Any, Optional
 
 from netmiko import ConnectHandler
 from netmiko.exceptions import NetmikoAuthenticationException, NetmikoTimeoutException
+
+from vendors.common import substitute_params
+from vendors.cisco import run_cisco_arp_clear_then_show
+from vendors.dlink import (
+    dlink_post_state_enable_flow,
+    dlink_run_fdb_vlan_mac_poll,
+    is_dlink_show_fdb_vlan_command,
+    is_dlink_state_enable_command,
+)
+from vendors.raisecom import (
+    is_iscom2624_dynamic_mac_command,
+    is_iscom_mac_vlan_command,
+    is_iscom_raisecom_switch_model,
+    raisecom_post_no_shutdown_iscom_port_flow,
+    raisecom_run_iscom_mac_vlan_poll,
+    raisecom_send_iscom2624_dynamic_mac_with_retry,
+    raisecom_sleep_after_no_shutdown_iscom2624,
+)
 
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -24,29 +41,32 @@ _OUTPUT_FILE_LOCK = threading.Lock()
 
 def _next_output_filename(out_dir: str) -> str:
     """
-    Следующее имя лога в формате 10 цифр: 0000000001.txt, 0000000002.txt, ...
+    Функция нумерации лог-файлов
+    ОПТИМИЗИРОВАНА
     """
-    max_num = 0
-    for name in os.listdir(out_dir):
-        if not name.endswith(".txt"):
-            continue
-        base = name[:-4]
-        if base.isdigit() and len(base) == 10:
-            n = int(base)
-            if n > max_num:
-                max_num = n
+    with os.scandir(out_dir) as entries:
+        numbers = (
+            int(entry.name[:-4])
+            for entry in entries
+            if entry.is_file()
+            and entry.name.endswith(".txt")
+            and len(entry.name) == 14
+            and entry.name[:-4].isdigit()
+        )
+        max_num = max(numbers, default=0)
     return f"{max_num + 1:010d}.txt"
 
 
 def _parse_scenario(path: str) -> tuple[dict[str, str], list[str]]:
+    """
+    Функция парсинга файлов сценариев диагностики
+    ОПТИМИЗИРОВАНА
+    """
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    # str.partition("---") ищет в строке первое вхождение "---"
-    # и возвращает кортеж из трёх частей: всё до "---" → head,
     head, _, commands_block = content.partition("---")
 
-    # разбиваем содержимое файла на исполняемые команды
     credentials: dict[str, str] = {}
     for line in head.strip().splitlines():
         line = line.strip()
@@ -56,192 +76,11 @@ def _parse_scenario(path: str) -> tuple[dict[str, str], list[str]]:
             key, _, value = line.partition("=")
             credentials[key.strip()] = value.strip()
 
-    # формирование массива команд
     commands = [
         line.strip() for line in commands_block.strip().splitlines()
         if line.strip() and not line.strip().startswith("#")
     ]
     return credentials, commands
-
-# Функция подставляет в строку команды значения из словаря вместо плейсхолдеров вида {ключ}.
-def _substitute_params(command: str, params: dict[str, Any]) -> str:
-    for key, value in params.items():
-        command = command.replace("{" + key + "}", str(value))
-    return command
-
-
-def _cisco_arp_line_interface(line: str) -> Optional[str]:
-    """Последняя колонка строки ARP — имя интерфейса (Internet … ARPA <ifname>)."""
-    parts = line.split()
-    if len(parts) < 2:
-        return None
-    if parts[0] == "Protocol":
-        return None
-    last = parts[-1]
-    if "/" in last or "." in last or last.lower().startswith("vlan"):
-        return last
-    return None
-
-
-def _vlan_id_from_cisco_interface(interface: str) -> Optional[str]:
-    """
-    Номер VLAN из имени L3-интерфейса: суффикс после последней точки (Gi0/0/0.625 → 625)
-    или Vlan625 → 625. Для 1625 суффикс 1625, не 625.
-    """
-    if "." in interface:
-        suffix = interface.rsplit(".", 1)[-1]
-        if suffix.isdigit():
-            return str(int(suffix))
-    low = interface.lower()
-    if low.startswith("vlan") and len(interface) > 4:
-        rest = interface[4:]
-        if rest.isdigit():
-            return str(int(rest))
-    return None
-
-
-def _vlan_params_match(vlan_param: str, iface_vlan_id: str) -> bool:
-    v = str(vlan_param).strip()
-    u = str(iface_vlan_id).strip()
-    if not v or not u:
-        return False
-    if v.isdigit() and u.isdigit():
-        return int(v) == int(u)
-    return v == u
-
-
-def _filter_cisco_arp_output_by_vlan(output: str, vlan: str) -> str:
-    """Оставляет только строки ARP, где L3-интерфейс соответствует указанному VLAN."""
-    kept: list[str] = []
-    for line in output.strip().splitlines():
-        line = line.strip()
-        if not line or line.startswith("Protocol"):
-            continue
-        iface = _cisco_arp_line_interface(line)
-        if not iface:
-            continue
-        vid = _vlan_id_from_cisco_interface(iface)
-        if vid is None:
-            continue
-        if _vlan_params_match(vlan, vid):
-            kept.append(line)
-    return "\n".join(kept)
-
-
-def _parse_interface_from_cisco_arp_for_vlan(output: str, vlan: str) -> Optional[str]:
-    """Первый интерфейс из строк ARP, прошедших фильтр по VLAN."""
-    for line in output.strip().splitlines():
-        line = line.strip()
-        if not line or line.startswith("Protocol"):
-            continue
-        iface = _cisco_arp_line_interface(line)
-        if not iface:
-            continue
-        vid = _vlan_id_from_cisco_interface(iface)
-        if vid is None:
-            continue
-        if _vlan_params_match(vlan, vid):
-            return iface
-    return None
-
-
-# --- D-Link helpers (DES 1228/26xx и т.п.) ---
-def _dlink_port_is_enabled(show_ports_output: str, port: str) -> bool:
-    """Определяет по выводу `show ports <port>`, что порт имеет состояние Enabled."""
-    port = str(port).strip()
-    if not port:
-        return False
-
-    # Часто встречается строка вида: "{ 2 [ Enabled ] ... Enabled }"
-    port_re = re.compile(r"\{\s*" + re.escape(port) + r"\b", re.IGNORECASE)
-    for line in show_ports_output.splitlines():
-        if port_re.search(line) and "enabled" in line.lower():
-            if "[ enabled ]" in line.lower() or "enabled" in line.lower():
-                return True
-        # fallback: если формат отличается, но порт и Enabled всё равно рядом
-        if port in line and "Enabled" in line:
-            return True
-    return False
-
-
-def _extract_macs_from_fdb_output(output: str) -> set[str]:
-    """Из вывода таблицы MAC (fdb / l2) извлекает MAC-адреса и возвращает множество уникальных."""
-    dot_mac_re = re.compile(r"\b[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\b")
-    colon_mac_re = re.compile(r"\b[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}\b")
-    macs: set[str] = set()
-
-    for m in dot_mac_re.findall(output):
-        macs.add(m.lower())
-    for m in colon_mac_re.findall(output):
-        macs.add(m.lower())
-    return macs
-
-
-def _raisecom_port_link_up_from_st(output: str) -> bool:
-    """По выводу `sh int port <n> st` — порт/линк в состоянии up."""
-    t = output.lower()
-    if re.search(r"link\s*[: ]+\s*up\b", t):
-        return True
-    if "operational" in t and re.search(r"operational\s+\S*\s*up\b", t):
-        return True
-    if "line protocol is up" in t:
-        return True
-    return False
-
-
-def _raisecom_port_link_up_from_interface(output: str) -> bool:
-    """
-    Для моделей вроде ISCOM2624: строка вида
-    'gigaethernet1/1/2 is UP, administrative status is UP'
-    """
-    t = output.lower()
-    return bool(re.search(r"\bis\s+up,\s+administrative status is\s+up\b", t))
-
-
-# Функция макроса проверки арпов, очистки и повторной проверки
-def _run_cisco_arp_clear_then_show(
-    conn: Any,
-    params: dict[str, Any],
-    full_output_lines: list[str],
-    read_timeout: int = 120,
-) -> None:
-    """sh arp | include {vlan}; на устройстве — грубый отбор, в отчёт — только строки с точным VLAN на сабинтерфейсе/VlanX."""
-    vlan = str(params.get("client_vlan", "") or params.get("vlan", ""))
-    arp_cmd = _substitute_params("sh arp | include {vlan}", params)
-    full_output_lines.append(f"\n--- Команда: {arp_cmd} ---\n")
-    out = conn.send_command(arp_cmd, read_timeout=read_timeout)
-    filtered = _filter_cisco_arp_output_by_vlan(out, vlan)
-    if filtered.strip():
-        full_output_lines.append(filtered)
-    else:
-        full_output_lines.append(
-            f"(после фильтра по VLAN {vlan} записей нет; "
-            "нужен L3-интерфейс вида *.{{vlan}} или Vlan{vlan})\n"
-        )
-
-    if not filtered.strip():
-        full_output_lines.append("\n(clear ARP не выполняется)\n")
-        return
-
-    interface = _parse_interface_from_cisco_arp_for_vlan(out, vlan)
-    if not interface:
-        full_output_lines.append("\n(интерфейс из вывода ARP не определён, clear не выполняется)\n")
-        return
-
-    clear_cmd = f"clear arp-cache int {interface}"
-    full_output_lines.append(f"\n--- Выполняем 8×: {clear_cmd} ---\n")
-    for i in range(8):
-        full_output_lines.append(f"  [{i + 1}/8] ")
-        o = conn.send_command(clear_cmd, read_timeout=read_timeout)
-        full_output_lines.append(o.strip() or "(ok)")
-
-    full_output_lines.append(f"\n--- Команда: {arp_cmd} (повторно) ---\n")
-    out2 = conn.send_command(arp_cmd, read_timeout=read_timeout)
-    filtered2 = _filter_cisco_arp_output_by_vlan(out2, vlan)
-    if filtered2.strip():
-        full_output_lines.append(filtered2)
-    else:
-        full_output_lines.append(f"(повторный sh arp: после фильтра по VLAN {vlan} записей нет)\n")
 
 
 def _run_device_diagnostics(
@@ -254,8 +93,6 @@ def _run_device_diagnostics(
     Подключается к одному устройству (host), выполняет сценарий в зависимости от модели, возвращает список строк вывода.
     Не пишет файл. Используется для объединённой диагностики оборудования и маршрутизатора.
     """
-    # В TCP запросах модель может содержать символы '/', которые нельзя/неудобно использовать
-    # в имени файла сценария. Стандартизируем: заменяем '/' на '-'.
     model_for_filename = (model or "").replace("/", "-")
 
     scenario_path = os.path.join(SCENARIO_DIR, f"{model_for_filename}.txt")
@@ -269,21 +106,12 @@ def _run_device_diagnostics(
     secret = credentials.get("secret", "")
 
     run_params = {**params, "model": model_for_filename}
-    commands = [_substitute_params(cmd, run_params) for cmd in raw_commands]
+    commands = [substitute_params(cmd, run_params) for cmd in raw_commands]
     actual_port_value = str(params.get("port", "") or "")
-    # Для DES-коммутаторов после `state enable` нужно подождать, пока линк/порт реально поднимется,
-    # и FDB успеет обновиться.
-    POST_ENABLE_DELAY_SEC = 5
+
     dlink_port_enabled_for_fdb_loop = False
     iscom_port_up_for_mac_loop = False
-    # Откат ISCOM-специфичной логики (проверки/петель FDB/MAC после no shutdown),
-    # чтобы вернуть поведение к “обычному” исполнению сценариев.
     ENABLE_ISCOM_MAC_POLLING = False
-    ISCOM2128_SCENARIO = "ISCOM2128EA-MA"
-    ISCOM2624_SCENARIO = "ISCOM2624G-4GE-AC"
-    is_iscom2128 = model_for_filename == ISCOM2128_SCENARIO
-    is_iscom2624 = model_for_filename == ISCOM2624_SCENARIO
-    is_iscom_raisecom_switch = is_iscom2128 or is_iscom2624
 
     conn_port = 23 if "telnet" in device_type.lower() else 22
     device: dict[str, Any] = {
@@ -300,9 +128,7 @@ def _run_device_diagnostics(
     full_output_lines: list[str] = []
     full_output_lines.append(f"=== {model} | {host} | {datetime.now().isoformat()} ===\n")
 
-    # Режим по таймеру (send_command_timing): для cisco_ios и raisecom_telnet — вывод может идти долго, не ждём приглашение
     use_timing = device_type in ("cisco_ios", "raisecom_telnet")
-    # Увеличенный таймаут для Telnet Raisecom (MAC-таблица по vlan/port отдаётся очень долго)
     if device_type == "raisecom_telnet":
         read_timeout = max(read_timeout, 300)
     expect_flexible = device_type == "raisecom_roap"
@@ -316,91 +142,43 @@ def _run_device_diagnostics(
         for i, cmd in enumerate(commands):
             if cmd.strip() == "@cisco_arp_clear_then_show":
                 print(f"  [{host}] Команда: @cisco_arp_clear_then_show")
-                _run_cisco_arp_clear_then_show(conn, run_params, full_output_lines, read_timeout=read_timeout)
+                run_cisco_arp_clear_then_show(conn, run_params, full_output_lines, read_timeout=read_timeout)
                 print(f"  [{host}] Результат: макрос выполнен.")
                 continue
             print(f"  [{host}] Команда: {cmd}")
 
             cmd_lower = cmd.strip().lower()
-            is_dlink_enable_cmd = (
-                device_type == "dlink_ds"
-                and cmd_lower.startswith("config ports")
-                and "state enable" in cmd_lower
+            is_dlink_enable_cmd = is_dlink_state_enable_command(device_type, cmd_lower)
+            is_dlink_fdb_vlan_cmd = is_dlink_show_fdb_vlan_command(device_type, cmd_lower)
+            is_iscom_mac_vlan_cmd = is_iscom_mac_vlan_command(
+                model_for_filename, device_type, cmd_lower
             )
-            is_dlink_fdb_vlan_cmd = (
-                device_type == "dlink_ds"
-                and cmd_lower.startswith("show fdb vlan")
-            )
-            is_iscom_mac_vlan_cmd = (
-                is_iscom_raisecom_switch
-                and device_type == "raisecom_roap"
-                and (
-                    cmd_lower.startswith("sh mac-address-table l2 vlan")
-                    or cmd_lower.startswith("sh mac-address dynamic vlan")
-                )
-            )
-            # На ISCOM2624 команды MAC по dynamic могут отдавать вывод с задержкой.
-            # Снимаем их тайминговым режимом, чтобы Netmiko не “успел” завершить чтение по prompt.
-            is_iscom2624_dynamic_mac_cmd = (
-                is_iscom2624
-                and device_type == "raisecom_roap"
-                and cmd_lower.startswith("sh mac-address dynamic")
+            is_iscom2624_dynamic_mac_cmd = is_iscom2624_dynamic_mac_command(
+                model_for_filename, device_type, cmd_lower
             )
 
             full_output_lines.append(f"\n--- Команда: {cmd} ---\n")
 
-            # DES: `show fdb vlan`; ISCOM2128EA-MA/ISCOM2624G-4GE-AC: MAC по VLAN после перезапуска порта —
-            # раз в секунду до 2 уникальных MAC или 20 итераций; в отчёт только снимок с 2 MAC (как у D-Link).
             mac_poll_dlink = is_dlink_fdb_vlan_cmd and dlink_port_enabled_for_fdb_loop
-            mac_poll_iscom = ENABLE_ISCOM_MAC_POLLING and is_iscom_mac_vlan_cmd and iscom_port_up_for_mac_loop
+            mac_poll_iscom = (
+                ENABLE_ISCOM_MAC_POLLING
+                and is_iscom_mac_vlan_cmd
+                and iscom_port_up_for_mac_loop
+            )
             if mac_poll_dlink or mac_poll_iscom:
-                last_out = ""
-                final_out = ""
-                for attempt in range(20):
-                    if mac_poll_dlink:
-                        out_i = conn.send_command(cmd, read_timeout=read_timeout)
-                    else:
-                        out_i = conn.send_command(
-                            cmd,
-                            read_timeout=read_timeout,
-                            expect_string=expect_string,
-                            delay_factor=2,
-                        )
-                    last_out = out_i
-                    macs = _extract_macs_from_fdb_output(out_i)
-                    if len(macs) == 2:
-                        final_out = out_i
-                        break
-                    if attempt < 19:
-                        time.sleep(1)
-                out = final_out if final_out else last_out
                 if mac_poll_dlink:
+                    out = dlink_run_fdb_vlan_mac_poll(conn, cmd, read_timeout)
                     dlink_port_enabled_for_fdb_loop = False
-                if mac_poll_iscom:
+                else:
+                    out = raisecom_run_iscom_mac_vlan_poll(
+                        conn, cmd, read_timeout, expect_string
+                    )
                     iscom_port_up_for_mac_loop = False
             else:
                 if is_iscom2624_dynamic_mac_cmd:
-                    # На ISCOM2624 команда может отдавать MAC-таблицу с задержкой;
-                    # тайминговый режим надёжнее, чем ожидание prompt.
-                    out = ""
-                    last = ""
-                    # Иногда первая попытка возвращает только шапку (без MAC),
-                    # хотя в CLI MAC уже есть. Делаем несколько попыток и берём
-                    # первый вывод, где появились MAC-адреса.
-                    for attempt in range(3):
-                        last = conn.send_command_timing(
-                            cmd,
-                            last_read=6.0,
-                            read_timeout=read_timeout,
-                            strip_prompt=False,
-                            strip_command=False,
-                        )
-                        if _extract_macs_from_fdb_output(last):
-                            out = last
-                            break
-                        if attempt < 2:
-                            time.sleep(1)
-                    out = out or last
+                    out = raisecom_send_iscom2624_dynamic_mac_with_retry(
+                        conn, cmd, read_timeout
+                    )
                 elif use_timing:
                     last_read = 3.0 if device_type == "raisecom_telnet" else 2.5
                     out = conn.send_command_timing(
@@ -421,92 +199,29 @@ def _run_device_diagnostics(
             full_output_lines.append(out)
             print(f"  [{host}] Результат: {len(out)} символов")
 
-            # На ISCOM2624 после `no shutdown` требуется время на поднятие линка/обновление MAC.
-            if (
-                is_iscom2624
-                and device_type == "raisecom_roap"
-                and cmd_lower == "no shutdown"
-            ):
-                time.sleep(POST_ENABLE_DELAY_SEC)
+            raisecom_sleep_after_no_shutdown_iscom2624(
+                device_type, model_for_filename, cmd_lower
+            )
 
-            # После enable проверяем, поднялся ли порт:
-            # если не поднялся — делаем один повтор команды enable, ждём 5 секунд и проверяем снова.
             if is_dlink_enable_cmd:
-                time.sleep(POST_ENABLE_DELAY_SEC)
-                show_ports_cmd = f"show ports {actual_port_value}"
-                check_out = conn.send_command(show_ports_cmd, read_timeout=read_timeout)
-                port_enabled = _dlink_port_is_enabled(check_out, actual_port_value)
+                dlink_port_enabled_for_fdb_loop = dlink_post_state_enable_flow(
+                    conn, cmd, actual_port_value, read_timeout
+                )
 
-                if not port_enabled:
-                    # повторяем enable (вывод повтора не добавляем в отчёт)
-                    conn.send_command(cmd, read_timeout=read_timeout)
-                    time.sleep(POST_ENABLE_DELAY_SEC)
-                    check_out = conn.send_command(show_ports_cmd, read_timeout=read_timeout)
-                    port_enabled = _dlink_port_is_enabled(check_out, actual_port_value)
-
-                dlink_port_enabled_for_fdb_loop = port_enabled
-
-            # ISCOM2128EA-MA/ISCOM2624G-4GE-AC: после `no shutdown` на порту — пауза 5 с, проверка статуса,
-            # при необходимости один повтор int/no shut/exit; затем опрос MAC по vlan (см. mac_poll_iscom).
             if (
-                is_iscom_raisecom_switch
+                is_iscom_raisecom_switch_model(model_for_filename)
                 and device_type == "raisecom_roap"
                 and cmd_lower == "no shutdown"
                 and ENABLE_ISCOM_MAC_POLLING
             ):
-                time.sleep(POST_ENABLE_DELAY_SEC)
-                status_cmd = (
-                    f"sh int port {actual_port_value} st"
-                    if is_iscom2128
-                    else f"sh int gigaethernet 1/1/{actual_port_value}"
+                iscom_port_up_for_mac_loop = raisecom_post_no_shutdown_iscom_port_flow(
+                    conn,
+                    model_for_filename,
+                    device_type,
+                    actual_port_value,
+                    read_timeout,
+                    expect_string,
                 )
-                check_out = conn.send_command(
-                    status_cmd,
-                    read_timeout=read_timeout,
-                    expect_string=expect_string,
-                    delay_factor=2,
-                )
-                port_up = (
-                    _raisecom_port_link_up_from_st(check_out)
-                    if is_iscom2128
-                    else _raisecom_port_link_up_from_interface(check_out)
-                )
-                if not port_up:
-                    conn.send_command(
-                        (
-                            f"int port {actual_port_value}"
-                            if is_iscom2128
-                            else f"int gigaethernet 1/1/{actual_port_value}"
-                        ),
-                        read_timeout=read_timeout,
-                        expect_string=expect_string,
-                        delay_factor=2,
-                    )
-                    conn.send_command(
-                        "no shutdown",
-                        read_timeout=read_timeout,
-                        expect_string=expect_string,
-                        delay_factor=2,
-                    )
-                    conn.send_command(
-                        "exit",
-                        read_timeout=read_timeout,
-                        expect_string=expect_string,
-                        delay_factor=2,
-                    )
-                    time.sleep(POST_ENABLE_DELAY_SEC)
-                    check_out = conn.send_command(
-                        status_cmd,
-                        read_timeout=read_timeout,
-                        expect_string=expect_string,
-                        delay_factor=2,
-                    )
-                    port_up = (
-                        _raisecom_port_link_up_from_st(check_out)
-                        if is_iscom2128
-                        else _raisecom_port_link_up_from_interface(check_out)
-                    )
-                iscom_port_up_for_mac_loop = port_up
 
     return full_output_lines
 
@@ -520,7 +235,7 @@ def run_diagnostics(
     output_dir: Optional[str] = None,
     router_model: Optional[str] = None,
     router_ip: Optional[str] = None,
-) -> str:
+) -> tuple[str, str]:
     """
     Диагностика: только конечное оборудование или оборудование + маршрутизатор.
     При указании router_model и router_ip выполняются оба сценария, результат пишется в один файл.
@@ -533,9 +248,8 @@ def run_diagnostics(
     :param output_dir: директория для файла вывода (по умолчанию — diagnostics_output)
     :param router_model: модель маршрутизатора (имя сценария без .txt); при пустом — только оборудование
     :param router_ip: IP или хост маршрутизатора
-    :return: (полный текст вывода, путь к сохранённому файлу)
+    :return: пара (полный текст вывода, путь к сохранённому файлу)
     """
-    # Для OLT: из порта вида 3/1/5 получаем 3/1 (слот/порт OLT) для команд gpon-olt
     port_olt = port.rsplit("/", 1)[0] if port and port.count("/") >= 2 else (port or "")
     params = {
         "model": model,
