@@ -13,6 +13,10 @@ from netmiko.exceptions import NetmikoAuthenticationException, NetmikoTimeoutExc
 HOST = "0.0.0.0"
 PORT = 5000
 
+# Версия протокола диагностики по TCP. Смените при изменении формата ответов.
+# Проверка с клиента: отправить одну строку «protocol» — в ответ будет diagnostics-tcp-rev-N.
+DIAGNOSTICS_TCP_PROTOCOL_REV = 2
+
 PARAM_NAMES = (
     "model",
     "equipment_ip",
@@ -166,6 +170,13 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
 
         # Служебная команда для остановки сервера.
         req = line.strip().lower()
+        if req == "protocol":
+            _send_response(
+                conn,
+                f"diagnostics-tcp-rev-{DIAGNOSTICS_TCP_PROTOCOL_REV}\n".encode("utf-8"),
+                addr,
+            )
+            return
         if req == "ping":
             # Одна запись: два send подряд + немедленный close на Windows иногда
             # отдают клиенту только первый фрагмент.
@@ -260,7 +271,14 @@ def start_server(host: str = HOST, port: int = PORT) -> None:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((host, port))
         sock.listen()
-        print(f"Server listening on {host}:{port}")
+        print(
+            f"Server listening on {host}:{port} | diagnostics-tcp rev={DIAGNOSTICS_TCP_PROTOCOL_REV} "
+            f"| файл: {__file__}"
+        )
+        print(
+            "Проверка деплоя: отправьте по TCP строку «protocol» — должно вернуться "
+            f"diagnostics-tcp-rev-{DIAGNOSTICS_TCP_PROTOCOL_REV}"
+        )
 
         while True:
             conn, addr = sock.accept()
