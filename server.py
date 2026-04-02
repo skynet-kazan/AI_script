@@ -1,4 +1,5 @@
 import os
+import select
 import socket
 import sys
 import threading
@@ -267,16 +268,21 @@ def start_server(host: str = HOST, port: int = PORT) -> None:
         sock.listen()
         print(f"Server listening on {host}:{port}")
 
-        sock.settimeout(1.0)
+        # Таймаут только через select: иначе на Windows accept() после settimeout кидает
+        # TimeoutError, который в части окружений не сматчивается с except socket.timeout.
         while True:
+            if _stop_server_requested.is_set():
+                print("Сервер остановлен по команде stop.")
+                break
+            try:
+                readable, _, _ = select.select([sock], [], [], 1.0)
+            except (ValueError, OSError):
+                break
+            if not readable:
+                continue
             try:
                 conn, addr = sock.accept()
-            # На Windows при settimeout accept часто кидает встроенный TimeoutError,
-            # а не socket.timeout — перехватываем оба (на Linux обычно socket.timeout).
-            except (socket.timeout, TimeoutError):
-                if _stop_server_requested.is_set():
-                    print("Сервер остановлен по команде stop.")
-                    break
+            except OSError:
                 continue
             thread = threading.Thread(
                 target=_handle_client,
