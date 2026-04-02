@@ -133,6 +133,14 @@ def _read_line(conn: socket.socket, bufsize: int = 4096) -> str:
     return line[0].strip() if line else ""
 
 
+def _set_tcp_nodelay(conn: socket.socket) -> None:
+    """Отключает алгоритм Нейгла — иначе короткий ранний ACK может склеиться с большим финальным ответом."""
+    try:
+        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    except (OSError, AttributeError):
+        pass
+
+
 def _send_response(conn: socket.socket, msg: bytes, addr: Tuple[str, int]) -> None:
     try:
         conn.sendall(msg)
@@ -142,6 +150,7 @@ def _send_response(conn: socket.socket, msg: bytes, addr: Tuple[str, int]) -> No
 
 def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
     print(f"[{addr}] Подключение.")
+    _set_tcp_nodelay(conn)
     reserved_ips: Optional[FrozenSet[str]] = None
     try:
         # Важно: резерв IP в очереди делается только после этой строки. Если клиент
