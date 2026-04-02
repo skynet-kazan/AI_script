@@ -40,10 +40,15 @@ class _WaitEntry:
     ticket: int
 
 
+def _normalize_target_key(host: str) -> str:
+    """Единый ключ для сравнения хостов в очереди (в т.ч. регистр имён)."""
+    return (host or "").strip().lower()
+
+
 def _diagnostic_target_ips(equipment_ip: str, router_ip: Optional[str]) -> FrozenSet[str]:
-    ips: set[str] = {equipment_ip.strip()}
+    ips: set[str] = {_normalize_target_key(equipment_ip)}
     if router_ip and str(router_ip).strip():
-        ips.add(str(router_ip).strip())
+        ips.add(_normalize_target_key(str(router_ip)))
     return frozenset(ips)
 
 
@@ -66,8 +71,17 @@ def _enqueue_or_acquire_ips(ips: FrozenSet[str]) -> Tuple[bool, int, int, Option
             ev = threading.Event()
             _wait_queue.append(_WaitEntry(event=ev, ips=ips, ticket=ticket))
             position = len(_wait_queue)
+            print(
+                f"[queue] QUEUE ticket={ticket} pos={position} "
+                f"targets={sorted(ips)} busy={sorted(_running_ips)} "
+                f"({threading.current_thread().name})"
+            )
             return False, ticket, position, ev
         _running_ips |= ips
+        print(
+            f"[queue] RUN  targets={sorted(ips)} busy_after={sorted(_running_ips)} "
+            f"({threading.current_thread().name})"
+        )
         return True, 0, 0, None
 
 
