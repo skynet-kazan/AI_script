@@ -3,9 +3,11 @@
 Отправляет тестовый запрос (строка параметров через запятую), получает ответ,
 печатает результат. Удобно для проверки, что сервер живой и отрабатывает сценарии.
 
-Протокол диагностики:
+Протокол диагностики (актуальный server.py):
 1) первая строка: «{log_id} в обработке» или «{log_id} место в очереди № N ожидайте»
-2) после завершения: строка «{log_id}», затем тело отчёта (до закрытия сокета).
+2) после завершения: строка «{log_id}», затем тело отчёта.
+
+Устаревший сервер: «OK» → «{log_id}» → тело — поддерживается для чтения, в stderr — предупреждение.
 
 Служебные команды: ping / stop — см. server.py.
 """
@@ -60,6 +62,10 @@ def check_server(
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.settimeout(600)
             sock.connect((host, port))
+            try:
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except (OSError, AttributeError):
+                pass
             sock.sendall((request.strip() + "\n").encode("utf-8"))
 
             line1, tail = _read_line(sock, b"")
@@ -68,12 +74,35 @@ def check_server(
                     print("Сервер закрыл соединение без ответа.", file=sys.stderr)
                 return False
 
-            # ping: OK\nPING\n
+            # «OK»: либо ping (OK → PING), либо устаревшая диагностика (OK → 10-значный log_id → отчёт).
             if line1 == "OK":
-                content = _read_rest(sock, initial=tail)
+                line2, rest = _read_line(sock, tail)
+                if len(line2) == 10 and line2.isdigit():
+                    if verbose:
+                        print(
+                            "Внимание: на сервере старый протокол (сначала OK, без «в обработке» до диагностики). "
+                            "Обновите и перезапустите server.py.\n",
+                            file=sys.stderr,
+                        )
+                        print(f"{line2}\n")
+                    content = _read_rest(sock, initial=rest)
+                    if verbose:
+                        print(content)
+                    return True
+                if line2 == "PING" or line2.startswith("PING"):
+                    content = _read_rest(sock, initial=rest)
+                    if verbose:
+                        print("OK\n")
+                        out = line2
+                        if content:
+                            out = out + "\n" + content
+                        print(out)
+                    return True
                 if verbose:
                     print("OK\n")
-                    print(content)
+                    if line2:
+                        print(line2)
+                    print(_read_rest(sock, initial=rest))
                 return True
 
             if line1.startswith("ERROR"):
