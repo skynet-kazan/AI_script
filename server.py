@@ -271,7 +271,9 @@ def start_server(host: str = HOST, port: int = PORT) -> None:
         while True:
             try:
                 conn, addr = sock.accept()
-            except socket.timeout:
+            # На Windows при settimeout accept часто кидает встроенный TimeoutError,
+            # а не socket.timeout — перехватываем оба (на Linux обычно socket.timeout).
+            except (socket.timeout, TimeoutError):
                 if _stop_server_requested.is_set():
                     print("Сервер остановлен по команде stop.")
                     break

@@ -10,7 +10,7 @@ import sys
 
 
 # По умолчанию — локально; переопределите через --host или CHECK_SERVER_HOST.
-_HOST_ENV = os.environ.get("CHECK_SERVER_HOST", "127.0.0.1")
+_HOST_ENV = os.environ.get("CHECK_SERVER_HOST", "10.3.1.147")
 _PORT_ENV = int(os.environ.get("CHECK_SERVER_PORT", "5000"))
 
 # «Живой» сервер: команда ping в server.py (не используйте stop — она убивает процесс).
