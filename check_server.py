@@ -2,47 +2,37 @@
 Модуль проверки работоспособности сервера диагностики.
 Отправляет тестовый запрос (строка параметров через запятую), получает ответ,
 печатает результат. Удобно для проверки, что сервер живой и отрабатывает сценарии.
+
+Протокол диагностики:
+1) первая строка: «{log_id} в обработке» или «{log_id} место в очереди № N ожидайте»
+2) после завершения: строка «{log_id}», затем тело отчёта (до закрытия сокета).
+
+Служебные команды: ping / stop — см. server.py.
 """
 import socket
 import sys
 
 
-# Для теста на этой же машине укажите 127.0.0.1
 HOST = "10.3.1.147"
 PORT = 5000
 
-# Стандартный тестовый запрос (модель оборудования, IP оборудования, модель роутера, хост роутера, IP клиента, VLAN, порт)
-DEFAULT_REQUEST = "stop"
+DEFAULT_REQUEST = "ZTE C620, 10.151.0.136, cisco_asr1002, bul.loc, 172.200.151.218, 1344, 1/1/13:35"
 
 
-def _read_status_line(sock: socket.socket, bufsize: int = 4096) -> tuple[str, bytes]:
-    """
-    Читает одну строку статуса (до \\n / \\r\\n) и возвращает:
-    - строку статуса
-    - "остаток" байт, которые уже пришли в сокет после конца строки статуса
-      (важно, чтобы не потерять начало тела ответа).
-    """
-    buf = bytearray()
-    while True:
-        # Поиск разделителя строки в уже накопленном буфере.
-        nl = buf.find(b"\n")
-        if nl != -1:
-            # если было \r\n, то отрезаем \r тоже
-            line_end = nl
-            if nl > 0 and buf[nl - 1:nl] == b"\r":
-                line_end = nl - 1
-            status = bytes(buf[:line_end]).decode(errors="replace").strip()
-            rest = bytes(buf[nl + 1:])
-            return status, rest
-
+def _read_line(sock: socket.socket, initial: bytes = b"", bufsize: int = 4096) -> tuple[str, bytes]:
+    buf = bytearray(initial)
+    while b"\n" not in buf:
         data = sock.recv(bufsize)
         if not data:
-            # соединение закрыто, статуса может не быть
-            return (
-                (bytes(buf).decode(errors="replace").splitlines()[0].strip() if buf else ""),
-                b"",
-            )
+            line0 = bytes(buf).decode(errors="replace").splitlines()
+            return (line0[0].strip() if line0 else ""), b""
         buf.extend(data)
+    nl = buf.find(b"\n")
+    line_end = nl
+    if nl > 0 and buf[nl - 1 : nl] == b"\r":
+        line_end = nl - 1
+    line = bytes(buf[:line_end]).decode(errors="replace").strip()
+    return line, bytes(buf[nl + 1 :])
 
 
 def _read_rest(sock: socket.socket, initial: bytes = b"", bufsize: int = 65536) -> str:
@@ -61,10 +51,6 @@ def check_server(
     request: str | None = None,
     verbose: bool = True,
 ) -> bool:
-    """
-    Отправляет на сервер строку request (параметры через запятую), читает ответ.
-    Возвращает True при успехе (OK + вывод), False при ошибке или отсутствии ответа.
-    """
     request = request or DEFAULT_REQUEST
     if verbose:
         print(f"Подключение к {host}:{port}...")
@@ -72,23 +58,59 @@ def check_server(
 
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.settimeout(300)
+            sock.settimeout(600)
             sock.connect((host, port))
-            sock.sendall((request.strip() + "\n").encode())
+            sock.sendall((request.strip() + "\n").encode("utf-8"))
 
-            status, rest = _read_status_line(sock)
-            if not status:
+            line1, tail = _read_line(sock, b"")
+            if not line1:
                 if verbose:
                     print("Сервер закрыл соединение без ответа.", file=sys.stderr)
                 return False
-            if status != "OK":
+
+            # ping: OK\nPING\n
+            if line1 == "OK":
+                content = _read_rest(sock, initial=tail)
                 if verbose:
-                    print(f"Ошибка: {status}", file=sys.stderr)
+                    print("OK\n")
+                    print(content)
+                return True
+
+            if line1.startswith("ERROR"):
+                if verbose:
+                    print(f"Ошибка: {line1}", file=sys.stderr)
+                return False
+
+            head = line1.split(None, 1)
+            if len(head) < 1 or len(head[0]) != 10 or not head[0].isdigit():
+                if verbose:
+                    print(f"Неожиданная первая строка: {line1!r}", file=sys.stderr)
+                return False
+
+            log_id = head[0]
+            if verbose:
+                print(f"Ранний ответ сервера: {line1}\n")
+
+            line2, rest = _read_line(sock, tail)
+            if not line2:
+                if verbose:
+                    print("Нет итоговой строки от сервера.", file=sys.stderr)
+                return False
+            if line2.startswith("ERROR"):
+                if verbose:
+                    print(f"Ошибка: {line2}", file=sys.stderr)
+                return False
+            if line2 != log_id:
+                if verbose:
+                    print(
+                        f"Ожидался log_id {log_id!r}, получено: {line2!r}",
+                        file=sys.stderr,
+                    )
                 return False
 
             content = _read_rest(sock, initial=rest)
             if verbose:
-                print("OK\n")
+                print(f"{log_id}\n")
                 print(content)
             return True
     except socket.timeout:

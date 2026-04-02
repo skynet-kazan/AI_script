@@ -6,7 +6,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Deque, FrozenSet, Optional, Set, Tuple
 
-from equipment_diagnostics import run_diagnostics
+from equipment_diagnostics import reserve_diagnostics_output_file, run_diagnostics
 from netmiko.exceptions import NetmikoAuthenticationException, NetmikoTimeoutException
 
 
@@ -163,16 +163,9 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
             _send_response(conn, b"OK\nPING\n", addr)
             return
         if req == "stop" or req.startswith("stop,"):
-            print(f"[{addr}] Получена команда stop. Завершение после отправки OK клиенту.")
+            print(f"[{addr}] Получена команда stop. Останавливаем процесс сервера.")
             _send_response(conn, b"OK\n", addr)
-            try:
-                # Гарантируем FIN стороны отправителя после OK — иначе os._exit обрывает процесс
-                # и клиент может не увидеть ответ (особенно на Windows).
-                conn.shutdown(socket.SHUT_WR)
-            except OSError:
-                pass
-            _stop_server_requested.set()
-            return
+            os._exit(0)
 
         parts = [p.strip() for p in line.split(",")]
         while len(parts) < NUM_PARAMS:
@@ -195,27 +188,24 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
         target_ips = _diagnostic_target_ips(equipment_ip, router_ip)
         immediate, ticket, position, wait_ev = _enqueue_or_acquire_ips(target_ips)
 
+        log_id, out_path = reserve_diagnostics_output_file()
         if not immediate:
-            queued_msg = (
-                f"QUEUED\n"
-                f"ticket={ticket}\n"
-                f"position={position}\n"
-                f"Ваша диагностика в очереди № {ticket}, "
-                f"позиция в очереди на обработку: {position}\n"
-            ).encode("utf-8")
-            _send_response(conn, queued_msg, addr)
+            ack = f"{log_id} место в очереди № {position} ожидайте\n"
+            _send_response(conn, ack.encode("utf-8"), addr)
             print(
-                f"[{addr}] Ожидание очереди: ticket={ticket}, position={position}, "
+                f"[{addr}] Ожидание очереди: log_id={log_id} ticket={ticket}, position={position}, "
                 f"targets={sorted(target_ips)}"
             )
             assert wait_ev is not None
             wait_ev.wait()
             print(f"[{addr}] Очередь: освобождён слот, запуск диагностики.")
+        else:
+            _send_response(conn, f"{log_id} в обработке\n".encode("utf-8"), addr)
 
         reserved_ips = target_ips
 
         print(
-            f"[{addr}] Подключение успешно. Параметры: equipment={equipment_ip}, "
+            f"[{addr}] Подключение успешно. log_id={log_id} Параметры: equipment={equipment_ip}, "
             f"router={router_ip or '-'}"
         )
         print(f"[{addr}] Запуск диагностики...")
@@ -229,12 +219,12 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
                 "port": port,
                 "router_model": router_model,
                 "router_ip": router_ip,
-            }
+            },
+            out_path=out_path,
         )
-        log_id = os.path.splitext(os.path.basename(out_path))[0]
 
         print(f"[{addr}] Диагностика завершена. Отправка ответа клиенту ({len(full_output)} символов).")
-        _send_response(conn, b"OK\n", addr)
+        # Итог: первая строка — тот же log_id для сопоставления на клиенте, далее тело отчёта (без префикса OK).
         _send_response(conn, f"{log_id}\n".encode("utf-8"), addr)
         _send_response(conn, full_output.encode("utf-8"), addr)
     except FileNotFoundError as e:

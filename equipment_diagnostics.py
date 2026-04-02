@@ -57,6 +57,22 @@ def _next_output_filename(out_dir: str) -> str:
     return f"{max_num + 1:010d}.txt"
 
 
+def reserve_diagnostics_output_file(out_dir: str | None = None) -> tuple[str, str]:
+    """
+    Резервирует следующий лог-файл (пустой .txt под тем же замком, что и нумерация).
+    Возвращает (log_id без расширения, полный путь).
+    """
+    od = out_dir or OUTPUT_DIR
+    os.makedirs(od, exist_ok=True)
+    with _OUTPUT_FILE_LOCK:
+        filename = _next_output_filename(od)
+        path = os.path.join(od, filename)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("")
+    log_id = os.path.splitext(filename)[0]
+    return log_id, path
+
+
 def _parse_scenario(path: str) -> tuple[dict[str, str], list[str]]:
     """
     Функция парсинга файлов сценариев диагностики
@@ -187,7 +203,7 @@ def _run_device_diagnostics(
     return [session_header, *body_lines]
 
 
-def run_diagnostics(params: dict[str, Any]) -> tuple[str, str]:
+def run_diagnostics(params: dict[str, Any], out_path: str | None = None) -> tuple[str, str]:
     """
     Диагностика: только конечное оборудование или оборудование + маршрутизатор.
     При указании router_model и router_ip выполняются оба сценария, результат пишется в один файл.
@@ -198,6 +214,8 @@ def run_diagnostics(params: dict[str, Any]) -> tuple[str, str]:
     - client_ip, client_vlan, port: параметры клиента/порта (допускаются строки по умолчанию \"-\")
     - output_dir: опционально, директория для файла вывода (по умолчанию diagnostics_output)
     - router_model, router_ip: опционально, вторая цель (маршрутизатор)
+
+    out_path: если задан (зарезервированный путь .txt), результат пишется туда; иначе выделяется новое имя.
 
     :return: пара (полный текст вывода, путь к сохранённому файлу)
     """
@@ -258,11 +276,16 @@ def run_diagnostics(params: dict[str, Any]) -> tuple[str, str]:
 
     out_dir = output_dir or OUTPUT_DIR
     os.makedirs(out_dir, exist_ok=True)
-    with _OUTPUT_FILE_LOCK:
-        filename = _next_output_filename(out_dir)
-        out_path = os.path.join(out_dir, filename)
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write(full_output)
+    if out_path:
+        final_path = out_path
+        with open(final_path, "w", encoding="utf-8") as f:
+            f.write(full_output)
+    else:
+        with _OUTPUT_FILE_LOCK:
+            filename = _next_output_filename(out_dir)
+            final_path = os.path.join(out_dir, filename)
+        with open(final_path, "w", encoding="utf-8") as f:
+            f.write(full_output)
 
-    print(f"Вывод сохранён: {out_path}")
-    return full_output, out_path
+    print(f"Вывод сохранён: {final_path}")
+    return full_output, final_path
