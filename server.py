@@ -2,6 +2,7 @@ import os
 import socket
 import sys
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass
 from typing import Deque, FrozenSet, Optional, Set, Tuple
@@ -144,7 +145,12 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
     print(f"[{addr}] Подключение.")
     reserved_ips: Optional[FrozenSet[str]] = None
     try:
+        # Важно: резерв IP в очереди делается только после этой строки. Если клиент
+        # открыл сокет, но отправит запрос позже (например после ответа по другому
+        # соединению), слот может уже освободиться — пересечения не будет, QUEUED не уйдёт.
+        print(f"[{addr}] Ожидание строки запроса...")
         line = _read_line(conn)
+        print(f"[{addr}] Строка запроса получена ({len(line)} симв.).")
         if not line:
             print(f"[{addr}] Пустой запрос.")
             _send_response(conn, b"ERROR: No data received\n", addr)
@@ -152,9 +158,19 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
 
         # Служебная команда для остановки сервера.
         req = line.strip().lower()
+        if req == "ping":
+            # Одна запись: два send подряд + немедленный close на Windows иногда
+            # отдают клиенту только первый фрагмент.
+            _send_response(conn, b"OK\nPING\n", addr)
+            return
         if req == "stop" or req.startswith("stop,"):
             print(f"[{addr}] Получена команда stop. Останавливаем процесс сервера.")
             _send_response(conn, b"OK\n", addr)
+            try:
+                conn.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+            time.sleep(0.15)
             os._exit(0)
 
         parts = [p.strip() for p in line.split(",")]
