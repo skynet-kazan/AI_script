@@ -1,5 +1,4 @@
 import os
-import select
 import socket
 import sys
 import threading
@@ -24,9 +23,6 @@ PARAM_NAMES = (
     "port",
 )
 NUM_PARAMS = len(PARAM_NAMES)
-
-# После «stop» главный поток выходит из accept; без os._exit — чтобы клиент успел прочитать OK.
-_stop_server_requested = threading.Event()
 
 
 # --- Очередь: не запускать параллельно диагностику, если занят equipment_ip или router_ip ---
@@ -261,29 +257,14 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
 
 
 def start_server(host: str = HOST, port: int = PORT) -> None:
-    _stop_server_requested.clear()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((host, port))
         sock.listen()
         print(f"Server listening on {host}:{port}")
 
-        # Таймаут только через select: иначе на Windows accept() после settimeout кидает
-        # TimeoutError, который в части окружений не сматчивается с except socket.timeout.
         while True:
-            if _stop_server_requested.is_set():
-                print("Сервер остановлен по команде stop.")
-                break
-            try:
-                readable, _, _ = select.select([sock], [], [], 1.0)
-            except (ValueError, OSError):
-                break
-            if not readable:
-                continue
-            try:
-                conn, addr = sock.accept()
-            except OSError:
-                continue
+            conn, addr = sock.accept()
             thread = threading.Thread(
                 target=_handle_client,
                 args=(conn, addr),
