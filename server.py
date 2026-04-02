@@ -103,13 +103,15 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
         print(f"[{addr}] Запуск диагностики...")
 
         full_output, out_path = run_diagnostics(
-            model=model,
-            equipment_ip=equipment_ip,
-            client_ip=client_ip,
-            client_vlan=client_vlan,
-            port=port,
-            router_model=router_model,
-            router_ip=router_ip,
+            {
+                "model": model,
+                "equipment_ip": equipment_ip,
+                "client_ip": client_ip,
+                "client_vlan": client_vlan,
+                "port": port,
+                "router_model": router_model,
+                "router_ip": router_ip,
+            }
         )
         log_id = os.path.splitext(os.path.basename(out_path))[0]
 

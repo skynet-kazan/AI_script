@@ -9,27 +9,27 @@ import os
 import time
 import threading
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from netmiko import ConnectHandler
 from netmiko.exceptions import NetmikoAuthenticationException, NetmikoTimeoutException
 
-from vendors.common import substitute_params
-from vendors.cisco import run_cisco_arp_clear_then_show
-from vendors.dlink import (
-    dlink_post_state_enable_flow,
-    dlink_run_fdb_vlan_mac_poll,
-    is_dlink_show_fdb_vlan_command,
-    is_dlink_state_enable_command,
-)
-from vendors.raisecom import (
-    is_iscom2624_dynamic_mac_command,
-    is_iscom_mac_vlan_command,
-    is_iscom_raisecom_switch_model,
-    raisecom_post_no_shutdown_iscom_port_flow,
-    raisecom_run_iscom_mac_vlan_poll,
-    raisecom_send_iscom2624_dynamic_mac_with_retry,
-    raisecom_sleep_after_no_shutdown_iscom2624,
+from diagnostic_function import substitute_params
+from model_diagnostics_algorithm import (
+    diagnostics_bdcom_gp3600_04,
+    diagnostics_bdcom_gp3600_08,
+    diagnostics_bdcom_gp3600_16,
+    diagnostics_cisco_asr1002,
+    diagnostics_cisco_ios,
+    diagnostics_des_1228_me,
+    diagnostics_generic,
+    diagnostics_iscom2110ea_ma,
+    diagnostics_iscom2128ea_ma,
+    diagnostics_iscom2624g_4ge_ac,
+    diagnostics_iscom_5508_olt_gp4a,
+    diagnostics_snr_s2960_24g,
+    diagnostics_snr_s2985g_24t,
+    diagnostics_zte_c620,
 )
 
 
@@ -90,8 +90,8 @@ def _run_device_diagnostics(
     read_timeout: int = 120,
 ) -> list[str]:
     """
-    Подключается к одному устройству (host), выполняет сценарий в зависимости от модели, возвращает список строк вывода.
-    Не пишет файл. Используется для объединённой диагностики оборудования и маршрутизатора.
+    Подключается к одному устройству (host), по model_for_filename выбирает алгоритм (match/case)
+    и выполняет сценарий.
     """
     model_for_filename = (model or "").replace("/", "-")
 
@@ -109,10 +109,6 @@ def _run_device_diagnostics(
     commands = [substitute_params(cmd, run_params) for cmd in raw_commands]
     actual_port_value = str(params.get("port", "") or "")
 
-    dlink_port_enabled_for_fdb_loop = False
-    iscom_port_up_for_mac_loop = False
-    ENABLE_ISCOM_MAC_POLLING = False
-
     conn_port = 23 if "telnet" in device_type.lower() else 22
     device: dict[str, Any] = {
         "device_type": device_type,
@@ -125,131 +121,102 @@ def _run_device_diagnostics(
     if secret:
         device["secret"] = secret
 
-    full_output_lines: list[str] = []
-    full_output_lines.append(f"=== {model} | {host} | {datetime.now().isoformat()} ===\n")
+    session_header = f"=== {model} | {host} | {datetime.now().isoformat()} ===\n"
 
-    use_timing = device_type in ("cisco_ios", "raisecom_telnet")
     if device_type == "raisecom_telnet":
         read_timeout = max(read_timeout, 300)
+    use_timing = device_type in ("cisco_ios", "raisecom_telnet")
     expect_flexible = device_type == "raisecom_roap"
     expect_string = r'\S+[>#]\s*$|\(\w+[^)]*\)#\s*$' if expect_flexible else None
+
+    connect_ctx: dict[str, Any] = {
+        "host": host,
+        "device_type": device_type,
+        "read_timeout": read_timeout,
+        "use_timing": use_timing,
+        "expect_string": expect_string,
+    }
+    commands_ctx: dict[str, Any] = {
+        "commands": commands,
+        "run_params": run_params,
+        "model_for_filename": model_for_filename,
+        "actual_port_value": actual_port_value,
+    }
 
     print(f"  [{host}] Подключение к устройству...")
     with ConnectHandler(**device) as conn:
         print(f"  [{host}] Подключение успешно.")
         if use_timing:
             time.sleep(2 if device_type == "cisco_ios" else 1)
-        for i, cmd in enumerate(commands):
-            if cmd.strip() == "@cisco_arp_clear_then_show":
-                print(f"  [{host}] Команда: @cisco_arp_clear_then_show")
-                run_cisco_arp_clear_then_show(conn, run_params, full_output_lines, read_timeout=read_timeout)
-                print(f"  [{host}] Результат: макрос выполнен.")
-                continue
-            print(f"  [{host}] Команда: {cmd}")
 
-            cmd_lower = cmd.strip().lower()
-            is_dlink_enable_cmd = is_dlink_state_enable_command(device_type, cmd_lower)
-            is_dlink_fdb_vlan_cmd = is_dlink_show_fdb_vlan_command(device_type, cmd_lower)
-            is_iscom_mac_vlan_cmd = is_iscom_mac_vlan_command(
-                model_for_filename, device_type, cmd_lower
-            )
-            is_iscom2624_dynamic_mac_cmd = is_iscom2624_dynamic_mac_command(
-                model_for_filename, device_type, cmd_lower
-            )
-
-            full_output_lines.append(f"\n--- Команда: {cmd} ---\n")
-
-            mac_poll_dlink = is_dlink_fdb_vlan_cmd and dlink_port_enabled_for_fdb_loop
-            mac_poll_iscom = (
-                ENABLE_ISCOM_MAC_POLLING
-                and is_iscom_mac_vlan_cmd
-                and iscom_port_up_for_mac_loop
-            )
-            if mac_poll_dlink or mac_poll_iscom:
-                if mac_poll_dlink:
-                    out = dlink_run_fdb_vlan_mac_poll(conn, cmd, read_timeout)
-                    dlink_port_enabled_for_fdb_loop = False
-                else:
-                    out = raisecom_run_iscom_mac_vlan_poll(
-                        conn, cmd, read_timeout, expect_string
-                    )
-                    iscom_port_up_for_mac_loop = False
-            else:
-                if is_iscom2624_dynamic_mac_cmd:
-                    out = raisecom_send_iscom2624_dynamic_mac_with_retry(
-                        conn, cmd, read_timeout
-                    )
-                elif use_timing:
-                    last_read = 3.0 if device_type == "raisecom_telnet" else 2.5
-                    out = conn.send_command_timing(
-                        cmd,
-                        last_read=last_read,
-                        read_timeout=read_timeout,
-                        strip_prompt=False,
-                        strip_command=False,
-                    )
-                else:
-                    kwargs = {"read_timeout": read_timeout}
-                    if expect_string:
-                        kwargs["expect_string"] = expect_string
-                    if device_type in ("raisecom_roap", "raisecom_telnet"):
-                        kwargs["delay_factor"] = 2
-                    out = conn.send_command(cmd, **kwargs)
-
-            full_output_lines.append(out)
-            print(f"  [{host}] Результат: {len(out)} символов")
-
-            raisecom_sleep_after_no_shutdown_iscom2624(
-                device_type, model_for_filename, cmd_lower
-            )
-
-            if is_dlink_enable_cmd:
-                dlink_port_enabled_for_fdb_loop = dlink_post_state_enable_flow(
-                    conn, cmd, actual_port_value, read_timeout
+        match model_for_filename:
+            case "BDCOM GP3600-04":
+                body_lines = diagnostics_bdcom_gp3600_04(conn, connect_ctx, commands_ctx)
+            case "BDCOM GP3600-08":
+                body_lines = diagnostics_bdcom_gp3600_08(conn, connect_ctx, commands_ctx)
+            case "BDCOM GP3600-16":
+                body_lines = diagnostics_bdcom_gp3600_16(conn, connect_ctx, commands_ctx)
+            case "DES 1228-ME":
+                body_lines = diagnostics_des_1228_me(conn, connect_ctx, commands_ctx)
+            case "ISCOM 5508 OLT-gp4a":
+                body_lines = diagnostics_iscom_5508_olt_gp4a(conn, connect_ctx, commands_ctx)
+            case "ISCOM2110EA-MA":
+                body_lines = diagnostics_iscom2110ea_ma(conn, connect_ctx, commands_ctx)
+            case "ISCOM2128EA-MA":
+                body_lines = diagnostics_iscom2128ea_ma(conn, connect_ctx, commands_ctx)
+            case "ISCOM2624G-4GE-AC":
+                body_lines = diagnostics_iscom2624g_4ge_ac(conn, connect_ctx, commands_ctx)
+            case "SNR-S2960-24G":
+                body_lines = diagnostics_snr_s2960_24g(conn, connect_ctx, commands_ctx)
+            case "SNR-S2985G-24T":
+                body_lines = diagnostics_snr_s2985g_24t(conn, connect_ctx, commands_ctx)
+            case "ZTE C620":
+                body_lines = diagnostics_zte_c620(conn, connect_ctx, commands_ctx)
+            case "cisco_ios":
+                body_lines = diagnostics_cisco_ios(conn, connect_ctx, commands_ctx)
+            case "cisco_asr1002":
+                body_lines = diagnostics_cisco_asr1002(conn, connect_ctx, commands_ctx)
+            case "generic":
+                body_lines = diagnostics_generic(conn, connect_ctx, commands_ctx)
+            case _:
+                raise ValueError(
+                    f"Нет алгоритма диагностики для модели сценария: {model_for_filename!r}. "
+                    "Добавьте case и diagnostics_* в equipment_diagnostics.py и model_diagnostics_algorithm.py."
                 )
 
-            if (
-                is_iscom_raisecom_switch_model(model_for_filename)
-                and device_type == "raisecom_roap"
-                and cmd_lower == "no shutdown"
-                and ENABLE_ISCOM_MAC_POLLING
-            ):
-                iscom_port_up_for_mac_loop = raisecom_post_no_shutdown_iscom_port_flow(
-                    conn,
-                    model_for_filename,
-                    device_type,
-                    actual_port_value,
-                    read_timeout,
-                    expect_string,
-                )
-
-    return full_output_lines
+    return [session_header, *body_lines]
 
 
-def run_diagnostics(
-    model: str,
-    equipment_ip: str,
-    client_ip: str,
-    client_vlan: str,
-    port: str,
-    output_dir: Optional[str] = None,
-    router_model: Optional[str] = None,
-    router_ip: Optional[str] = None,
-) -> tuple[str, str]:
+def run_diagnostics(params: dict[str, Any]) -> tuple[str, str]:
     """
     Диагностика: только конечное оборудование или оборудование + маршрутизатор.
     При указании router_model и router_ip выполняются оба сценария, результат пишется в один файл.
 
-    :param model: модель конечного оборудования (имя сценария без .txt)
-    :param equipment_ip: IP или хост конечного оборудования
-    :param client_ip: IP клиента
-    :param client_vlan: VLAN клиента
-    :param port: порт на оборудовании
-    :param output_dir: директория для файла вывода (по умолчанию — diagnostics_output)
-    :param router_model: модель маршрутизатора (имя сценария без .txt); при пустом — только оборудование
-    :param router_ip: IP или хост маршрутизатора
+    Ожидаемые ключи в params:
+    - model: модель конечного оборудования (имя сценария без .txt), по умолчанию \"generic\"
+    - equipment_ip: обязательно, IP или хост конечного оборудования
+    - client_ip, client_vlan, port: параметры клиента/порта (допускаются строки по умолчанию \"-\")
+    - output_dir: опционально, директория для файла вывода (по умолчанию diagnostics_output)
+    - router_model, router_ip: опционально, вторая цель (маршрутизатор)
+
     :return: пара (полный текст вывода, путь к сохранённому файлу)
     """
+    model = str(params.get("model") or "generic").strip() or "generic"
+    equipment_ip = str(params.get("equipment_ip") or "").strip()
+    if not equipment_ip:
+        raise ValueError("params['equipment_ip'] обязателен")
+
+    client_ip = str(params.get("client_ip") or "-")
+    client_vlan = str(params.get("client_vlan") or "-")
+    port = str(params.get("port") or "-")
+    output_dir = params.get("output_dir")
+    output_dir = str(output_dir).strip() if output_dir else None
+
+    rm = params.get("router_model")
+    router_model = str(rm).strip() or None if rm is not None else None
+    ri = params.get("router_ip")
+    router_ip = str(ri).strip() or None if ri is not None else None
+
     port_olt = port.rsplit("/", 1)[0] if port and port.count("/") >= 2 else (port or "")
     params = {
         "model": model,
@@ -269,19 +236,23 @@ def run_diagnostics(
         print("--- Оборудование ---")
         equipment_lines = _run_device_diagnostics(model, equipment_ip, params, read_timeout=120)
         all_lines.extend(equipment_lines)
+    except (NetmikoAuthenticationException, NetmikoTimeoutException) as e:
+        all_lines.append(f"\nОшибка подключения (оборудование): {e}\n")
+        raise
 
-        if router_model and router_ip:
-            all_lines.append("\n\n")
-            all_lines.append("=" * 60 + "\n")
-            all_lines.append("Маршрутизатор (подписка клиента)\n")
-            all_lines.append("=" * 60 + "\n")
+    if router_model and router_ip:
+        all_lines.append("\n\n")
+        all_lines.append("=" * 60 + "\n")
+        all_lines.append("Маршрутизатор (подписка клиента)\n")
+        all_lines.append("=" * 60 + "\n")
+        try:
             print("--- Маршрутизатор ---")
             router_params = {**params, "model": router_model}
             router_lines = _run_device_diagnostics(router_model, router_ip, router_params, read_timeout=120)
             all_lines.extend(router_lines)
-    except (NetmikoAuthenticationException, NetmikoTimeoutException) as e:
-        all_lines.append(f"\nОшибка подключения: {e}\n")
-        raise
+        except (NetmikoAuthenticationException, NetmikoTimeoutException) as e:
+            all_lines.append(f"\nОшибка подключения (маршрутизатор): {e}\n")
+            raise
 
     full_output = "\n".join(all_lines)
 
