@@ -18,7 +18,7 @@ import sys
 HOST = "10.3.1.147"
 PORT = 5000
 
-DEFAULT_REQUEST = "ZTE C620, 10.151.0.136, cisco_asr1002, bul.loc, 172.200.151.218, 1344, 1/1/13:35"
+DEFAULT_REQUEST = "stop"
 
 
 def _read_line(sock: socket.socket, initial: bytes = b"", bufsize: int = 4096) -> tuple[str, bytes]:
@@ -118,7 +118,7 @@ def check_server(
 
             log_id = head[0]
             if verbose:
-                print(f"Ранний ответ сервера: {line1}\n")
+                print(f"{line1}\n")
 
             line2, rest = _read_line(sock, tail)
             if not line2:
