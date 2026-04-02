@@ -1,4 +1,5 @@
 import os
+import select
 import socket
 import sys
 import threading
@@ -16,6 +17,9 @@ PORT = 5000
 # Версия протокола диагностики по TCP. Смените при изменении формата ответов.
 # Проверка с клиента: отправить одну строку «protocol» — в ответ будет diagnostics-tcp-rev-N.
 DIAGNOSTICS_TCP_PROTOCOL_REV = 2
+
+# Команда «stop»: выставляется в потоке клиента; главный поток выходит из accept — процесс завершается без os._exit.
+_shutdown_requested = threading.Event()
 
 PARAM_NAMES = (
     "model",
@@ -183,9 +187,14 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
             _send_response(conn, b"OK\nPING\n", addr)
             return
         if req == "stop" or req.startswith("stop,"):
-            print(f"[{addr}] Получена команда stop. Останавливаем процесс сервера.")
+            print(f"[{addr}] Получена команда stop. Завершение работы сервера (выход из accept).")
             _send_response(conn, b"OK\n", addr)
-            os._exit(0)
+            try:
+                conn.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+            _shutdown_requested.set()
+            return
 
         parts = [p.strip() for p in line.split(",")]
         while len(parts) < NUM_PARAMS:
@@ -267,6 +276,7 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
 
 
 def start_server(host: str = HOST, port: int = PORT) -> None:
+    _shutdown_requested.clear()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((host, port))
@@ -280,8 +290,21 @@ def start_server(host: str = HOST, port: int = PORT) -> None:
             f"diagnostics-tcp-rev-{DIAGNOSTICS_TCP_PROTOCOL_REV}"
         )
 
+        # accept с таймаутом через select: чтобы после «stop» выйти из цикла и закрыть listening socket.
         while True:
-            conn, addr = sock.accept()
+            if _shutdown_requested.is_set():
+                print("Сервер остановлен по команде stop (процесс завершается штатно).")
+                break
+            try:
+                readable, _, _ = select.select([sock], [], [], 1.0)
+            except (ValueError, OSError):
+                break
+            if not readable:
+                continue
+            try:
+                conn, addr = sock.accept()
+            except OSError:
+                continue
             thread = threading.Thread(
                 target=_handle_client,
                 args=(conn, addr),
