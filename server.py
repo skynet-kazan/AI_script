@@ -58,7 +58,7 @@ def _enqueue_or_acquire_ips(ips: FrozenSet[str]) -> Tuple[bool, int, int, Option
     - position: позиция в момент постановки (0 если immediate)
     - wait_event: событие ожидания, если immediate == False
     """
-    global _next_queue_ticket
+    global _next_queue_ticket, _running_ips, _wait_queue
     with _diag_queue_lock:
         if _running_ips & ips:
             ticket = _next_queue_ticket
@@ -73,6 +73,7 @@ def _enqueue_or_acquire_ips(ips: FrozenSet[str]) -> Tuple[bool, int, int, Option
 
 def _release_diagnostic_slot_and_wake_next(ips: FrozenSet[str]) -> None:
     """Снимает резерв IP и будит следующий допустимый запрос из очереди (FIFO)."""
+    global _running_ips, _wait_queue
     with _diag_queue_lock:
         _running_ips -= ips
         while _wait_queue:
