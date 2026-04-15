@@ -132,6 +132,180 @@ def diagnostics_iscom2624g_4ge_ac(conn: Any, connect_ctx: dict[str, Any], comman
     return lines
 
 
+def _parse_raisecom_product_from_show_version(show_ver_output: str) -> str:
+    """
+    Извлекает Product Name из вывода `sh ver`.
+    Поддерживает варианты регистра и написания: Product Name / Product name.
+    """
+    for raw_line in show_ver_output.splitlines():
+        line = raw_line.strip()
+        lower = line.lower()
+        if lower.startswith("product name:"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def _select_iscom2624g_4c_ac_variant(product_name: str) -> str:
+    """
+    Выбирает ветку диагностики для номенклатуры ISCOM2624G-4C-AC по Product Name.
+    Возвращает ключ варианта:
+      - "standard_2624g_4c_ac"
+      - "variant_2924gf_4c_ac"
+      - "variant_2924gf_legacy"
+    """
+    normalized = (product_name or "").strip().lower().replace("_", "").replace(" ", "")
+    if "iscom2924gf-4c-ac/d".replace(" ", "") in normalized:
+        return "variant_2924gf_4c_ac"
+    if "iscom2924gf-4c-acdc".replace(" ", "") in normalized:
+        return "variant_2924gf_4c_ac"
+    if "iscom2924gf" in normalized:
+        return "variant_2924gf_legacy"
+    return "standard_2624g_4c_ac"
+
+
+def _run_iscom2924gf_4c_ac_post_ver_commands(
+    conn: Any, connect_ctx: dict[str, Any], commands_ctx: dict[str, Any]
+) -> list[str]:
+    """
+    Неполный сценарий для ISCOM2924GF-4C-AC_DC и ISCOM2924GF-4C-AC/D:
+    выполняется только часть ПОСЛЕ `sh ver`.
+    """
+    host = connect_ctx["host"]
+    device_type = connect_ctx["device_type"]
+    read_timeout = connect_ctx["read_timeout"]
+    use_timing = connect_ctx["use_timing"]
+    expect_string = connect_ctx["expect_string"]
+    run_params = commands_ctx["run_params"]
+    lines: list[str] = []
+    commands = [
+        "sh int port-list {port}",
+        "sh int port-list {port} st",
+        "sh mac-address-table l2 vlan {vlan}",
+        "conf",
+        "int port {port}",
+        "shutdown",
+        "no shutdown",
+        "exit",
+        "exit",
+        "sh int port-list {port}",
+        "sh int port-list {port} st",
+        "sh mac-address-table l2 vlan {vlan}",
+        "sh mac-address-table l2 port {port}",
+        'sh logging file | include "port{port}"',
+    ]
+    for cmd_tmpl in commands:
+        cmd = cmd_tmpl.format(**run_params)
+        print(f"  [{host}] Команда: {cmd}")
+        lines.append(f"\n--- Команда: {cmd} ---\n")
+        out = netmiko_send_adaptive(
+            conn,
+            cmd,
+            device_type=device_type,
+            use_timing=use_timing,
+            expect_string=expect_string,
+            read_timeout=read_timeout,
+        )
+        lines.append(out)
+        print(f"  [{host}] Результат: {len(out)} символов")
+    return lines
+
+
+def _run_iscom2924gf_legacy_post_ver_commands(
+    conn: Any, connect_ctx: dict[str, Any], commands_ctx: dict[str, Any]
+) -> list[str]:
+    """
+    Неполный сценарий для старого ISCOM2924GF:
+    используется хвост сценария ISCOM2128EA-MA (после `sh ver`).
+    """
+    host = connect_ctx["host"]
+    device_type = connect_ctx["device_type"]
+    read_timeout = connect_ctx["read_timeout"]
+    use_timing = connect_ctx["use_timing"]
+    expect_string = connect_ctx["expect_string"]
+    run_params = commands_ctx["run_params"]
+    lines: list[str] = []
+    commands = [
+        "sh int port {port}",
+        "sh int port {port} st",
+        "sh mac-address-table l2 vlan {vlan}",
+        "int port {port}",
+        "shutdown",
+        "no shutdown",
+        "exit",
+        "sh int port {port}",
+        "sh int port {port} st",
+        "sh mac-address-table l2 vlan {vlan}",
+        "sh mac-address-table l2 port {port}",
+        'sh logging file | include "port {port}"',
+    ]
+    for cmd_tmpl in commands:
+        cmd = cmd_tmpl.format(**run_params)
+        print(f"  [{host}] Команда: {cmd}")
+        lines.append(f"\n--- Команда: {cmd} ---\n")
+        out = netmiko_send_adaptive(
+            conn,
+            cmd,
+            device_type=device_type,
+            use_timing=use_timing,
+            expect_string=expect_string,
+            read_timeout=read_timeout,
+        )
+        lines.append(out)
+        print(f"  [{host}] Результат: {len(out)} символов")
+    return lines
+
+
+def diagnostics_iscom2624g_4c_ac(conn: Any, connect_ctx: dict[str, Any], commands_ctx: dict[str, Any]) -> list[str]:
+    """
+    Базовый прогон как у ISCOM2624G-4GE-AC, но после `sh ver`:
+    - парсит Product Name,
+    - выбирает ветку сценария,
+    - для нештатных моделей выполняет отдельный неполный хвост сценария.
+    """
+    host = connect_ctx["host"]
+    device_type = connect_ctx["device_type"]
+    read_timeout = connect_ctx["read_timeout"]
+    use_timing = connect_ctx["use_timing"]
+    expect_string = connect_ctx["expect_string"]
+    lines: list[str] = []
+    product_variant = "standard_2624g_4c_ac"
+
+    for cmd in commands_ctx["commands"]:
+        print(f"  [{host}] Команда: {cmd}")
+        cmd_lower = cmd.strip().lower()
+        lines.append(f"\n--- Команда: {cmd} ---\n")
+        if cmd_lower.startswith("sh mac-address dynamic"):
+            out = send_iscom2624_dynamic_mac_retry(conn, cmd, read_timeout)
+        else:
+            out = netmiko_send_adaptive(
+                conn,
+                cmd,
+                device_type=device_type,
+                use_timing=use_timing,
+                expect_string=expect_string,
+                read_timeout=read_timeout,
+            )
+        lines.append(out)
+        print(f"  [{host}] Результат: {len(out)} символов")
+
+        if cmd_lower == "sh ver":
+            product_name = _parse_raisecom_product_from_show_version(out)
+            product_variant = _select_iscom2624g_4c_ac_variant(product_name)
+            lines.append(
+                f"\n[auto-detect] Product Name: {product_name or '-'} | variant={product_variant}\n"
+            )
+            if product_variant == "variant_2924gf_4c_ac":
+                lines.extend(_run_iscom2924gf_4c_ac_post_ver_commands(conn, connect_ctx, commands_ctx))
+                return lines
+            if product_variant == "variant_2924gf_legacy":
+                lines.extend(_run_iscom2924gf_legacy_post_ver_commands(conn, connect_ctx, commands_ctx))
+                return lines
+
+        sleep_after_no_shutdown_iscom2624(device_type, cmd_lower)
+
+    return lines
+
+
 def diagnostics_snr_s2960_24g(conn: Any, connect_ctx: dict[str, Any], commands_ctx: dict[str, Any]) -> list[str]:
     return _commands_loop_default(conn, connect_ctx, commands_ctx)
 

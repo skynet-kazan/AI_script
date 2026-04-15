@@ -25,6 +25,7 @@ from model_diagnostics_algorithm import (
     diagnostics_generic,
     diagnostics_iscom2110ea_ma,
     diagnostics_iscom2128ea_ma,
+    diagnostics_iscom2624g_4c_ac,
     diagnostics_iscom2624g_4ge_ac,
     diagnostics_iscom_5508_olt_gp4a,
     diagnostics_snr_s2960_24g,
@@ -182,6 +183,8 @@ def _run_device_diagnostics(
                 body_lines = diagnostics_iscom2128ea_ma(conn, connect_ctx, commands_ctx)
             case "ISCOM2624G-4GE-AC":
                 body_lines = diagnostics_iscom2624g_4ge_ac(conn, connect_ctx, commands_ctx)
+            case "ISCOM2624G-4C-AC":
+                body_lines = diagnostics_iscom2624g_4c_ac(conn, connect_ctx, commands_ctx)
             case "SNR-S2960-24G":
                 body_lines = diagnostics_snr_s2960_24g(conn, connect_ctx, commands_ctx)
             case "SNR-S2985G-24T":
