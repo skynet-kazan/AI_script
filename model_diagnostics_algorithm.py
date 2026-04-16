@@ -212,7 +212,14 @@ def _run_iscom2924gf_4c_ac_post_ver_commands(
         print(f"  [{host}] Команда: {cmd}")
         lines.append(f"\n--- Команда: {cmd} ---\n")
         cmd_lower = cmd.strip().lower()
-        if cmd_lower.startswith("sh mac-address-table l2"):
+        if cmd_lower.startswith("sh int port ") and " st" not in cmd_lower:
+            out = raisecom_port_list_poll_operate_up(
+                conn,
+                cmd,
+                str(run_params.get("port", "")),
+                read_timeout,
+            )
+        elif cmd_lower.startswith("sh mac-address-table l2"):
             out = raisecom_mac_table_poll_two(conn, cmd, read_timeout)
         else:
             out = netmiko_send_adaptive(
@@ -318,7 +325,14 @@ def _run_iscom2924gf_legacy_post_ver_commands(
         print(f"  [{host}] Команда: {cmd}")
         lines.append(f"\n--- Команда: {cmd} ---\n")
         cmd_lower = cmd.strip().lower()
-        if cmd_lower.startswith("sh mac-address-table l2"):
+        if cmd_lower.startswith("sh int port ") and " st" not in cmd_lower:
+            out = raisecom_port_list_poll_operate_up(
+                conn,
+                cmd,
+                str(run_params.get("port", "")),
+                read_timeout,
+            )
+        elif cmd_lower.startswith("sh mac-address-table l2"):
             out = raisecom_mac_table_poll_two(conn, cmd, read_timeout)
         else:
             out = netmiko_send_adaptive(
