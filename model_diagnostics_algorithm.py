@@ -160,6 +160,8 @@ def _select_iscom2624g_4c_ac_variant(product_name: str) -> str:
     # - ISCOM2924GF-4C-AC_DC
     # - ISCOM2924GF-4C-AC/D
     # - ISCOM2924GF-4GE-AC/D
+    if "iscom2924gf-4ge-ac/d" in compact:
+        return "variant_2924gf_4ge_ac_d"
     if "iscom2924gf-4" in compact and ("ac/d" in compact or "acdc" in compact):
         return "variant_2924gf_4c_ac"
 
@@ -201,6 +203,53 @@ def _run_iscom2924gf_4c_ac_post_ver_commands(
         "sh mac-address-table l2 vlan {vlan}",
         "sh mac-address-table l2 port {port}",
         'sh logging file | include "port{port}"',
+    ]
+    for cmd_tmpl in commands:
+        cmd = cmd_tmpl.format(**run_params)
+        print(f"  [{host}] Команда: {cmd}")
+        lines.append(f"\n--- Команда: {cmd} ---\n")
+        out = netmiko_send_adaptive(
+            conn,
+            cmd,
+            device_type=device_type,
+            use_timing=use_timing,
+            expect_string=expect_string,
+            read_timeout=read_timeout,
+        )
+        lines.append(out)
+        print(f"  [{host}] Результат: {len(out)} символов")
+    return lines
+
+
+def _run_iscom2924gf_4ge_ac_d_post_ver_commands(
+    conn: Any, connect_ctx: dict[str, Any], commands_ctx: dict[str, Any]
+) -> list[str]:
+    """
+    Неполный сценарий для ISCOM2924GF-4GE-AC/D:
+    - порт проверяется через `sh int port-list`
+    - команду `sh logging file ...` НЕ выполняем (требование).
+    """
+    host = connect_ctx["host"]
+    device_type = connect_ctx["device_type"]
+    read_timeout = connect_ctx["read_timeout"]
+    use_timing = connect_ctx["use_timing"]
+    expect_string = connect_ctx["expect_string"]
+    run_params = commands_ctx["run_params"]
+    lines: list[str] = []
+    commands = [
+        "sh int port-list {port}",
+        "sh int port-list {port} st",
+        "sh mac-address-table l2 vlan {vlan}",
+        "conf",
+        "int port {port}",
+        "shutdown",
+        "no shutdown",
+        "exit",
+        "exit",
+        "sh int port-list {port}",
+        "sh int port-list {port} st",
+        "sh mac-address-table l2 vlan {vlan}",
+        "sh mac-address-table l2 port {port}",
     ]
     for cmd_tmpl in commands:
         cmd = cmd_tmpl.format(**run_params)
@@ -305,6 +354,9 @@ def diagnostics_iscom2624g_4c_ac(conn: Any, connect_ctx: dict[str, Any], command
             )
             if product_variant == "variant_2924gf_4c_ac":
                 lines.extend(_run_iscom2924gf_4c_ac_post_ver_commands(conn, connect_ctx, commands_ctx))
+                return lines
+            if product_variant == "variant_2924gf_4ge_ac_d":
+                lines.extend(_run_iscom2924gf_4ge_ac_d_post_ver_commands(conn, connect_ctx, commands_ctx))
                 return lines
             if product_variant == "variant_2924gf_legacy":
                 lines.extend(_run_iscom2924gf_legacy_post_ver_commands(conn, connect_ctx, commands_ctx))
