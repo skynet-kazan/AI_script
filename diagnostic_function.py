@@ -225,4 +225,22 @@ def raisecom_sleep_after_no_shutdown_iscom2624_workflow(device_type: str, cmd_lo
         time.sleep(POST_ENABLE_DELAY_SEC)
 
 
- 
+def raisecom_run_mac_table_poll_until_two_macs(conn: Any, cmd: str, read_timeout: int) -> str:
+    """
+    Raisecom/ISCOM: повтор команды MAC-таблицы до 20 раз (или пока не появится >=2 MAC).
+
+    Используется для команд вида:
+      - sh mac-address-table l2 vlan X
+      - sh mac-address-table l2 port Y
+    """
+    last_out = ""
+    final_out = ""
+    for attempt in range(20):
+        out_i = conn.send_command(cmd, read_timeout=read_timeout)
+        last_out = out_i
+        if len(extract_unique_macs_from_cli_table(out_i)) >= 2:
+            final_out = out_i
+            break
+        if attempt < 19:
+            time.sleep(1)
+    return final_out if final_out else last_out

@@ -17,7 +17,7 @@ import sys
 HOST = "10.3.1.147"
 PORT = 5000
 
-DEFAULT_REQUEST = "stop"
+DEFAULT_REQUEST = "ISCOM2624G-4C-AC, 10.144.0.250, cisco_asr1002, asr2.loc, 172.200.96.210, 1709, 4"
 
 
 def _read_line(sock: socket.socket, initial: bytes = b"", bufsize: int = 4096) -> tuple[str, bytes]:

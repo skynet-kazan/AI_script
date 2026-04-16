@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from diagnostic_function import (
@@ -12,6 +13,7 @@ from diagnostic_function import (
     dlink_run_fdb_vlan_mac_poll as run_fdb_vlan_mac_poll,
     handle_cisco_arp_clear_then_show_command,
     netmiko_send_adaptive,
+    raisecom_run_mac_table_poll_until_two_macs as raisecom_mac_table_poll_two,
     raisecom_send_iscom2624_dynamic_mac_with_retry as send_iscom2624_dynamic_mac_retry,
     raisecom_sleep_after_no_shutdown_iscom2624_workflow as sleep_after_no_shutdown_iscom2624,
 )
@@ -208,16 +210,22 @@ def _run_iscom2924gf_4c_ac_post_ver_commands(
         cmd = cmd_tmpl.format(**run_params)
         print(f"  [{host}] Команда: {cmd}")
         lines.append(f"\n--- Команда: {cmd} ---\n")
-        out = netmiko_send_adaptive(
-            conn,
-            cmd,
-            device_type=device_type,
-            use_timing=use_timing,
-            expect_string=expect_string,
-            read_timeout=read_timeout,
-        )
+        cmd_lower = cmd.strip().lower()
+        if cmd_lower.startswith("sh mac-address-table l2"):
+            out = raisecom_mac_table_poll_two(conn, cmd, read_timeout)
+        else:
+            out = netmiko_send_adaptive(
+                conn,
+                cmd,
+                device_type=device_type,
+                use_timing=use_timing,
+                expect_string=expect_string,
+                read_timeout=read_timeout,
+            )
         lines.append(out)
         print(f"  [{host}] Результат: {len(out)} символов")
+        if cmd_lower == "shutdown":
+            time.sleep(5)
     return lines
 
 
@@ -255,16 +263,22 @@ def _run_iscom2924gf_4ge_ac_d_post_ver_commands(
         cmd = cmd_tmpl.format(**run_params)
         print(f"  [{host}] Команда: {cmd}")
         lines.append(f"\n--- Команда: {cmd} ---\n")
-        out = netmiko_send_adaptive(
-            conn,
-            cmd,
-            device_type=device_type,
-            use_timing=use_timing,
-            expect_string=expect_string,
-            read_timeout=read_timeout,
-        )
+        cmd_lower = cmd.strip().lower()
+        if cmd_lower.startswith("sh mac-address-table l2"):
+            out = raisecom_mac_table_poll_two(conn, cmd, read_timeout)
+        else:
+            out = netmiko_send_adaptive(
+                conn,
+                cmd,
+                device_type=device_type,
+                use_timing=use_timing,
+                expect_string=expect_string,
+                read_timeout=read_timeout,
+            )
         lines.append(out)
         print(f"  [{host}] Результат: {len(out)} символов")
+        if cmd_lower == "shutdown":
+            time.sleep(5)
     return lines
 
 
@@ -300,16 +314,22 @@ def _run_iscom2924gf_legacy_post_ver_commands(
         cmd = cmd_tmpl.format(**run_params)
         print(f"  [{host}] Команда: {cmd}")
         lines.append(f"\n--- Команда: {cmd} ---\n")
-        out = netmiko_send_adaptive(
-            conn,
-            cmd,
-            device_type=device_type,
-            use_timing=use_timing,
-            expect_string=expect_string,
-            read_timeout=read_timeout,
-        )
+        cmd_lower = cmd.strip().lower()
+        if cmd_lower.startswith("sh mac-address-table l2"):
+            out = raisecom_mac_table_poll_two(conn, cmd, read_timeout)
+        else:
+            out = netmiko_send_adaptive(
+                conn,
+                cmd,
+                device_type=device_type,
+                use_timing=use_timing,
+                expect_string=expect_string,
+                read_timeout=read_timeout,
+            )
         lines.append(out)
         print(f"  [{host}] Результат: {len(out)} символов")
+        if cmd_lower == "shutdown":
+            time.sleep(5)
     return lines
 
 
