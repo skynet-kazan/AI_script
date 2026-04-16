@@ -3,6 +3,7 @@ import select
 import socket
 import sys
 import threading
+import traceback
 from collections import deque
 from dataclasses import dataclass
 from typing import Deque, FrozenSet, Optional, Set, Tuple
@@ -258,13 +259,27 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
         _send_response(conn, full_output.encode("utf-8"), addr)
     except FileNotFoundError as e:
         print(f"[{addr}] Ошибка: {e}", file=sys.stderr)
-        _send_response(conn, f"ERROR: {e}\n".encode(), addr)
+        _send_response(
+            conn,
+            f"ERROR: {type(e).__name__}: {e!s}\n".encode("utf-8"),
+            addr,
+        )
     except (NetmikoAuthenticationException, NetmikoTimeoutException) as e:
         print(f"[{addr}] Ошибка SSH: {e}", file=sys.stderr)
-        _send_response(conn, f"ERROR: SSH: {e}\n".encode(), addr)
+        _send_response(
+            conn,
+            f"ERROR: SSH: {e!s}\n".encode("utf-8"),
+            addr,
+        )
     except Exception as exc:
         print(f"[{addr}] Ошибка: {exc}", file=sys.stderr)
-        _send_response(conn, f"ERROR: {exc}\n".encode(), addr)
+        # Многие исключения имеют пустой .__str__ — покажем repr, чтобы клиент видел причину.
+        first_tb_line = traceback.format_exc().splitlines()[-1] if traceback.format_exc() else ""
+        _send_response(
+            conn,
+            f"ERROR: {type(exc).__name__}: {exc!r}\n".encode("utf-8"),
+            addr,
+        )
     finally:
         if reserved_ips is not None:
             _release_diagnostic_slot_and_wake_next(reserved_ips)

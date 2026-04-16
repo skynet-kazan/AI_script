@@ -183,9 +183,12 @@ def _run_iscom2924gf_4c_ac_post_ver_commands(
     expect_string = connect_ctx["expect_string"]
     run_params = commands_ctx["run_params"]
     lines: list[str] = []
+    # Неполный хвост сценария ISCOM2924GF-4C-AC/DC после `sh ver`:
+    # (без повторного `terminal page-break disable` и `sh ver`, потому что это уже выполнено
+    #  базовым прогоном ISCOM2624G-4C-AC до вызова этой функции)
     commands = [
-        "sh int port-list {port}",
-        "sh int port-list {port} st",
+        "sh int port {port}",
+        "sh int port {port} st",
         "sh mac-address-table l2 vlan {vlan}",
         "conf",
         "int port {port}",
@@ -193,8 +196,8 @@ def _run_iscom2924gf_4c_ac_post_ver_commands(
         "no shutdown",
         "exit",
         "exit",
-        "sh int port-list {port}",
-        "sh int port-list {port} st",
+        "sh int port {port}",
+        "sh int port {port} st",
         "sh mac-address-table l2 vlan {vlan}",
         "sh mac-address-table l2 port {port}",
         'sh logging file | include "port{port}"',
