@@ -244,3 +244,52 @@ def raisecom_run_mac_table_poll_until_two_macs(conn: Any, cmd: str, read_timeout
         if attempt < 19:
             time.sleep(1)
     return final_out if final_out else last_out
+
+
+def raisecom_run_port_list_poll_until_operate_up(
+    conn: Any,
+    cmd: str,
+    port: str,
+    read_timeout: int,
+) -> str:
+    """
+    Raisecom/ISCOM: повторяем `sh int port-list {port}` до тех пор, пока
+    в строке порта не появится Operate=up(...), либо пока не кончится 20 итераций.
+
+    Условие для "up": в строке порта встречается подстрока `up(`.
+    """
+    port_req = str(port).strip()
+    if not port_req:
+        return conn.send_command(cmd, read_timeout=read_timeout)
+
+    last_out = ""
+    final_out = ""
+    port_req_lower = port_req.lower()
+    port_prefix1 = f"p{port_req_lower}"  # обычно: P4
+    port_prefix2 = f"port{port_req_lower}"  # на всякий случай
+
+    for attempt in range(20):
+        out_i = conn.send_command(cmd, read_timeout=read_timeout)
+        last_out = out_i
+
+        for raw in (out_i or "").splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            lower = line.lower()
+            # Ищем именно строку порта, а не просто "up(" где-то в выводе.
+            if lower.startswith(port_prefix1) or lower.startswith(port_prefix2):
+                if "up(" in lower:
+                    final_out = out_i
+                    break
+            # fallback: если формат строки чуть другой, но P{port} и up( есть на одной строке
+            if port_req_lower in lower and "up(" in lower and "port-list" not in lower:
+                final_out = out_i
+                break
+
+        if final_out:
+            break
+        if attempt < 19:
+            time.sleep(1)
+
+    return final_out if final_out else last_out

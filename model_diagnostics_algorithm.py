@@ -14,6 +14,7 @@ from diagnostic_function import (
     handle_cisco_arp_clear_then_show_command,
     netmiko_send_adaptive,
     raisecom_run_mac_table_poll_until_two_macs as raisecom_mac_table_poll_two,
+    raisecom_run_port_list_poll_until_operate_up as raisecom_port_list_poll_operate_up,
     raisecom_send_iscom2624_dynamic_mac_with_retry as send_iscom2624_dynamic_mac_retry,
     raisecom_sleep_after_no_shutdown_iscom2624_workflow as sleep_after_no_shutdown_iscom2624,
 )
@@ -264,7 +265,9 @@ def _run_iscom2924gf_4ge_ac_d_post_ver_commands(
         print(f"  [{host}] Команда: {cmd}")
         lines.append(f"\n--- Команда: {cmd} ---\n")
         cmd_lower = cmd.strip().lower()
-        if cmd_lower.startswith("sh mac-address-table l2"):
+        if cmd_lower.startswith("sh int port-list") and " st" not in cmd_lower:
+            out = raisecom_port_list_poll_operate_up(conn, cmd, str(run_params.get("port", "")), read_timeout)
+        elif cmd_lower.startswith("sh mac-address-table l2"):
             out = raisecom_mac_table_poll_two(conn, cmd, read_timeout)
         else:
             out = netmiko_send_adaptive(
