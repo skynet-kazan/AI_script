@@ -153,12 +153,18 @@ def _select_iscom2624g_4c_ac_variant(product_name: str) -> str:
       - "variant_2924gf_4c_ac"
       - "variant_2924gf_legacy"
     """
-    normalized = (product_name or "").strip().lower().replace("_", "").replace(" ", "")
-    if "iscom2924gf-4c-ac/d".replace(" ", "") in normalized:
+    normalized = (product_name or "").strip().lower()
+    compact = normalized.replace("_", "").replace(" ", "")
+
+    # Семейство 2924GF-4x-AC/* (в т.ч. встречающиеся варианты 4C и 4GE):
+    # - ISCOM2924GF-4C-AC_DC
+    # - ISCOM2924GF-4C-AC/D
+    # - ISCOM2924GF-4GE-AC/D
+    if "iscom2924gf-4" in compact and ("ac/d" in compact or "acdc" in compact):
         return "variant_2924gf_4c_ac"
-    if "iscom2924gf-4c-acdc".replace(" ", "") in normalized:
-        return "variant_2924gf_4c_ac"
-    if "iscom2924gf" in normalized:
+
+    # Старый 2924GF без суффикса 4x-AC/*
+    if "iscom2924gf" in compact:
         return "variant_2924gf_legacy"
     return "standard_2624g_4c_ac"
 
