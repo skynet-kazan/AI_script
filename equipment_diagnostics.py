@@ -196,6 +196,9 @@ def _run_device_diagnostics(
                 body_lines = diagnostics_snr_s2985g_24t(conn, connect_ctx, commands_ctx)
             case "ZTE C620":
                 body_lines = diagnostics_zte_c620(conn, connect_ctx, commands_ctx)
+            case "ZTE C320":
+                # Для C320 используем тот же алгоритм отправки команд, что и для C620.
+                body_lines = diagnostics_zte_c620(conn, connect_ctx, commands_ctx)
             case "cisco_ios":
                 body_lines = diagnostics_cisco_ios(conn, connect_ctx, commands_ctx)
             case "cisco_asr1002":
