@@ -134,6 +134,11 @@ def _run_device_diagnostics(
         "password": password,
         "port": conn_port,
         "global_delay_factor": 2,
+        # На перегруженных/дальних узлах Paramiko иногда даёт "No existing session"
+        # при слишком коротком установочном таймауте. Держим явные таймауты подключения.
+        "conn_timeout": 20,
+        "auth_timeout": 20,
+        "banner_timeout": 30,
     }
     if secret:
         device["secret"] = secret
