@@ -154,24 +154,6 @@ def _run_device_diagnostics(
         "actual_port_value": actual_port_value,
     }
 
-    # RB941: отдельный жёсткий путь без fallback-веток.
-    # Это исключает попытки raw/legacy telnet логики, которые могут отправлять команды в login-поток.
-    if model_for_filename == "RB941":
-        device_rb = {**device, "device_type": "generic_telnet"}
-        connect_ctx_rb: dict[str, Any] = {
-            "host": host,
-            "device_type": "generic_telnet",
-            "read_timeout": read_timeout,
-            "use_timing": True,
-            "expect_string": None,
-        }
-        print(f"  [{host}] Подключение к устройству (device_type=generic_telnet, RB941 hard path)...")
-        with ConnectHandler(**device_rb) as conn:
-            print(f"  [{host}] Подключение успешно (device_type=generic_telnet, RB941).")
-            time.sleep(1)
-            body_lines = diagnostics_rb941(conn, connect_ctx_rb, commands_ctx)
-        return [session_header, *body_lines]
-
     def _build_connect_ctx(current_device_type: str) -> dict[str, Any]:
         rt = max(read_timeout, 300) if current_device_type == "raisecom_telnet" else read_timeout
         use_timing = current_device_type in ("cisco_ios", "raisecom_telnet", "generic_telnet")
@@ -193,22 +175,6 @@ def _run_device_diagnostics(
             print(f"  [{host}] Подключение успешно (device_type={current_device_type}).")
             if connect_ctx["use_timing"]:
                 time.sleep(2 if current_device_type == "cisco_ios" else 1)
-            if model_for_filename == "RB941" and current_device_type == "generic_telnet":
-                # Stabilize prompt for RouterOS telnet and verify we are not in login dialog.
-                conn.write_channel("\n")
-                time.sleep(0.7)
-                probe = conn.read_channel() or ""
-                low_probe = probe.lower()
-                if (
-                    "login:" in low_probe
-                    or "password:" in low_probe
-                    or "incorrect username or password" in low_probe
-                    or "login failed" in low_probe
-                ):
-                    raise NetmikoAuthenticationException(
-                        "RB941 generic_telnet connected but still at login prompt"
-                    )
-
             match model_for_filename:
                 case "BDCOM GP3600-04":
                     body_lines = diagnostics_bdcom_gp3600_04(conn, connect_ctx, commands_ctx)
