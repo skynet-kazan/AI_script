@@ -18,6 +18,7 @@ from diagnostic_function import (
     raisecom_send_iscom2624_dynamic_mac_with_retry as send_iscom2624_dynamic_mac_retry,
     raisecom_sleep_after_no_shutdown_iscom2624_workflow as sleep_after_no_shutdown_iscom2624,
 )
+from netmiko.exceptions import NetmikoAuthenticationException
 
 
 def _commands_loop_default(conn: Any, connect_ctx: dict[str, Any], commands_ctx: dict[str, Any]) -> list[str]:
@@ -413,7 +414,39 @@ def diagnostics_snr_s2985g_24t(conn: Any, connect_ctx: dict[str, Any], commands_
 
 
 def diagnostics_rb941(conn: Any, connect_ctx: dict[str, Any], commands_ctx: dict[str, Any]) -> list[str]:
-    return _commands_loop_default(conn, connect_ctx, commands_ctx)
+    host = connect_ctx["host"]
+    device_type = connect_ctx["device_type"]
+    read_timeout = connect_ctx["read_timeout"]
+    use_timing = connect_ctx["use_timing"]
+    expect_string = connect_ctx["expect_string"]
+    lines: list[str] = []
+
+    for cmd in commands_ctx["commands"]:
+        print(f"  [{host}] Команда: {cmd}")
+        lines.append(f"\n--- Команда: {cmd} ---\n")
+        out = netmiko_send_adaptive(
+            conn,
+            cmd,
+            device_type=device_type,
+            use_timing=use_timing,
+            expect_string=expect_string,
+            read_timeout=read_timeout,
+        )
+        low = (out or "").lower()
+        # Защита от ситуации, когда устройство вернулось в login-поток:
+        # не продолжаем отправлять следующие команды как "username".
+        if (
+            "login:" in low
+            or "password:" in low
+            or "incorrect username or password" in low
+            or "login failed" in low
+        ):
+            raise NetmikoAuthenticationException(
+                "RB941 telnet session is not authenticated (device returned login/password prompt)"
+            )
+        lines.append(out)
+        print(f"  [{host}] Результат: {len(out)} символов")
+    return lines
 
 
 def diagnostics_zte_c620(conn: Any, connect_ctx: dict[str, Any], commands_ctx: dict[str, Any]) -> list[str]:

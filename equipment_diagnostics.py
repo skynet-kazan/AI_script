@@ -193,6 +193,21 @@ def _run_device_diagnostics(
             print(f"  [{host}] Подключение успешно (device_type={current_device_type}).")
             if connect_ctx["use_timing"]:
                 time.sleep(2 if current_device_type == "cisco_ios" else 1)
+            if model_for_filename == "RB941" and current_device_type == "generic_telnet":
+                # Stabilize prompt for RouterOS telnet and verify we are not in login dialog.
+                conn.write_channel("\n")
+                time.sleep(0.7)
+                probe = conn.read_channel() or ""
+                low_probe = probe.lower()
+                if (
+                    "login:" in low_probe
+                    or "password:" in low_probe
+                    or "incorrect username or password" in low_probe
+                    or "login failed" in low_probe
+                ):
+                    raise NetmikoAuthenticationException(
+                        "RB941 generic_telnet connected but still at login prompt"
+                    )
 
             match model_for_filename:
                 case "BDCOM GP3600-04":
@@ -237,17 +252,17 @@ def _run_device_diagnostics(
                     )
         return body_lines
 
-    # RB941: сначала generic_telnet, при EOF/auth ошибке — fallback на raisecom_telnet.
-    # Это возвращает рабочий логин для "капризных" telnet-сессий RouterOS.
+    # RB941: сначала raisecom_telnet (как у вас исторически логинилось),
+    # при EOF/auth ошибке — fallback на generic_telnet.
     if model_for_filename == "RB941":
         try:
-            body_lines = _run_with_device_type("generic_telnet")
+            body_lines = _run_with_device_type("raisecom_telnet")
         except (NetmikoAuthenticationException, EOFError) as e:
             print(
-                f"  [{host}] generic_telnet failed for RB941, retry with raisecom_telnet: {e}",
+                f"  [{host}] raisecom_telnet failed for RB941, retry with generic_telnet: {e}",
                 file=sys.stderr,
             )
-            body_lines = _run_with_device_type("raisecom_telnet")
+            body_lines = _run_with_device_type("generic_telnet")
     else:
         body_lines = _run_with_device_type(device_type)
 
