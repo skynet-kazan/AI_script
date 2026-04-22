@@ -395,16 +395,16 @@ def _run_device_diagnostics(
         return body_lines
 
     # RB941: сначала пробуем "как Raisecom OLT" (raisecom_telnet),
-    # затем fallback на raw-telnet (без generic_telnet, чтобы не отправлять команды в login-поток).
+    # затем generic_telnet (обычно даёт корректный CLI-вывод для RouterOS).
     if model_for_filename == "RB941" and device_type == "raisecom_telnet":
         try:
             body_lines = _run_with_device_type("raisecom_telnet")
         except (NetmikoAuthenticationException, EOFError) as e:
             print(
-                f"  [{host}] raisecom_telnet failed for RB941, retry with raw-telnet fallback: {e}",
+                f"  [{host}] raisecom_telnet failed for RB941, retry with generic_telnet: {e}",
                 file=sys.stderr,
             )
-            body_lines = _run_rb941_via_raw_telnet()
+            body_lines = _run_with_device_type("generic_telnet")
     else:
         body_lines = _run_with_device_type(device_type)
 
