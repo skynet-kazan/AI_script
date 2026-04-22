@@ -156,6 +156,24 @@ def _run_device_diagnostics(
         "actual_port_value": actual_port_value,
     }
 
+    # RB941: отдельный жёсткий путь без fallback-веток.
+    # Это исключает попытки raw/legacy telnet логики, которые могут отправлять команды в login-поток.
+    if model_for_filename == "RB941":
+        device_rb = {**device, "device_type": "generic_telnet"}
+        connect_ctx_rb: dict[str, Any] = {
+            "host": host,
+            "device_type": "generic_telnet",
+            "read_timeout": read_timeout,
+            "use_timing": True,
+            "expect_string": None,
+        }
+        print(f"  [{host}] Подключение к устройству (device_type=generic_telnet, RB941 hard path)...")
+        with ConnectHandler(**device_rb) as conn:
+            print(f"  [{host}] Подключение успешно (device_type=generic_telnet, RB941).")
+            time.sleep(1)
+            body_lines = diagnostics_rb941(conn, connect_ctx_rb, commands_ctx)
+        return [session_header, *body_lines]
+
     def _strip_telnet_iac(data: bytes) -> bytes:
         """Удаляет telnet IAC-последовательности из потока перед декодированием."""
         if not data:
