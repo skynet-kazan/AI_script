@@ -248,7 +248,7 @@ def _run_device_diagnostics(
             )
             # На части RouterOS prompt логина не печатается явно. Пробуем "слепой" ввод username.
 
-            sock.sendall((username + "\n").encode("utf-8"))
+            sock.sendall((username + "\r\n").encode("utf-8"))
             pw_phase = _recv_until_markers(
                 markers=["password:", "login failed", "incorrect", "failure", ">", "#"],
                 timeout_sec=6.0,
@@ -262,7 +262,7 @@ def _run_device_diagnostics(
                 post_auth = pw_phase
             else:
                 # На некоторых RouterOS prompt пароля не печатается — отправляем пароль в blind-режиме.
-                sock.sendall((password + "\n").encode("utf-8"))
+                sock.sendall((password + "\r\n").encode("utf-8"))
                 post_auth = _recv_until_markers(
                     markers=[">", "#", "login failed", "incorrect", "failure"],
                     timeout_sec=6.0,
@@ -273,18 +273,22 @@ def _run_device_diagnostics(
             # На MikroTik обычно shell prompt заканчивается на '>' или '#'.
             if not re.search(r"[>#]\s*$", post_auth):
                 # Пробуем пробудить prompt Enter-ом.
-                sock.sendall(b"\n")
+                sock.sendall(b"\r\n")
                 post_auth += _recv_for(1.5).decode("utf-8", errors="replace")
                 if not re.search(r"[>#]\s*$", post_auth):
-                    raise NetmikoAuthenticationException(
-                        f"RB941 raw-telnet: shell prompt not detected; "
-                        f"pw_phase={pw_phase[:120]!r}; post_auth={post_auth[:200]!r}"
+                    # На части RouterOS prompt может не отрисоваться в буфер,
+                    # но сессия уже авторизована (видно по server-side logout).
+                    # Не роняем диагностику: пробуем выполнить команды.
+                    print(
+                        f"  [{host}] RB941 raw-telnet: shell prompt not detected, continue anyway; "
+                        f"pw_phase={pw_phase[:120]!r}; post_auth={post_auth[:200]!r}",
+                        file=sys.stderr,
                     )
 
             for cmd in commands:
                 print(f"  [{host}] Команда: {cmd} (raw-telnet fallback)")
                 lines.append(f"\n--- Команда: {cmd} ---\n")
-                sock.sendall((cmd + "\n").encode("utf-8"))
+                sock.sendall((cmd + "\r\n").encode("utf-8"))
 
                 deadline = time.time() + min(max(read_timeout, 10), 25)
                 last_data_ts = time.time()
