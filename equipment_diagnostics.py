@@ -250,15 +250,23 @@ def _run_device_diagnostics(
 
             sock.sendall((username + "\n").encode("utf-8"))
             pw_phase = _recv_until_markers(
-                markers=["password:"],
+                markers=["password:", "login failed", "incorrect", "failure", ">", "#"],
                 timeout_sec=6.0,
             )
-            # На некоторых RouterOS prompt пароля не печатается — отправляем пароль в blind-режиме.
-            sock.sendall((password + "\n").encode("utf-8"))
-            post_auth = _recv_until_markers(
-                markers=[">", "#", "login failed", "incorrect", "failure"],
-                timeout_sec=6.0,
-            )
+            low_pw = pw_phase.lower()
+            if any(k in low_pw for k in ("login failed", "incorrect", "failure")):
+                raise NetmikoAuthenticationException("RB941 raw-telnet: authentication failed at username step")
+
+            # RouterOS может сразу пустить в shell после username (без password prompt).
+            if re.search(r"[>#]\s*$", pw_phase):
+                post_auth = pw_phase
+            else:
+                # На некоторых RouterOS prompt пароля не печатается — отправляем пароль в blind-режиме.
+                sock.sendall((password + "\n").encode("utf-8"))
+                post_auth = _recv_until_markers(
+                    markers=[">", "#", "login failed", "incorrect", "failure"],
+                    timeout_sec=6.0,
+                )
             low_auth = post_auth.lower()
             if any(k in low_auth for k in ("login failed", "incorrect", "failure")):
                 raise NetmikoAuthenticationException("RB941 raw-telnet: authentication failed")
