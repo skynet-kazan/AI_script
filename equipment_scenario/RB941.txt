@@ -1,4 +1,4 @@
-device_type=raisecom_telnet
+device_type=generic_telnet
 username=admin
 password=611621
 ---
@@ -7,8 +7,6 @@ password=611621
 /interface ethernet print stats where name=ether{port}
 /interface ethernet print where name=ether{port}
 /interface bridge host print where on-interface=ether{port} and !local
-/interface disable ether{port}
-/interface enable ether{port}
 /interface print stats-detail where name=ether{port}
 /interface ethernet print stats where name=ether{port}
 /interface ethernet print where name=ether{port}
