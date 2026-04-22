@@ -240,14 +240,13 @@ def _run_device_diagnostics(
         try:
             # Считываем initial banner и ДОЖИДАЕМСЯ login prompt.
             # Иначе есть риск отправить первую CLI-команду как username.
+            # Подтолкнуть устройство показать prompt (часто баннер приходит только после Enter).
+            sock.sendall(b"\r\n")
             banner = _recv_until_markers(
                 markers=["login:", "username:", "name:"],
                 timeout_sec=6.0,
             )
-            if not any(k in banner.lower() for k in ("login:", "username:", "name:")):
-                raise NetmikoAuthenticationException(
-                    f"RB941 raw-telnet: login prompt not found; got={banner[:200]!r}"
-                )
+            # На части RouterOS prompt логина не печатается явно. Пробуем "слепой" ввод username.
 
             sock.sendall((username + "\n").encode("utf-8"))
             pw_phase = _recv_until_markers(
@@ -377,23 +376,16 @@ def _run_device_diagnostics(
         return body_lines
 
     # RB941: сначала пробуем "как Raisecom OLT" (raisecom_telnet),
-    # затем fallback на generic_telnet при auth/EOF проблемах telnet login-flow.
+    # затем fallback на raw-telnet (без generic_telnet, чтобы не отправлять команды в login-поток).
     if model_for_filename == "RB941" and device_type == "raisecom_telnet":
         try:
             body_lines = _run_with_device_type("raisecom_telnet")
         except (NetmikoAuthenticationException, EOFError) as e:
             print(
-                f"  [{host}] raisecom_telnet failed for RB941, retry with generic_telnet: {e}",
+                f"  [{host}] raisecom_telnet failed for RB941, retry with raw-telnet fallback: {e}",
                 file=sys.stderr,
             )
-            try:
-                body_lines = _run_with_device_type("generic_telnet")
-            except (NetmikoAuthenticationException, EOFError) as e2:
-                print(
-                    f"  [{host}] generic_telnet failed for RB941, retry with raw-telnet fallback: {e2}",
-                    file=sys.stderr,
-                )
-                body_lines = _run_rb941_via_raw_telnet()
+            body_lines = _run_rb941_via_raw_telnet()
     else:
         body_lines = _run_with_device_type(device_type)
 
