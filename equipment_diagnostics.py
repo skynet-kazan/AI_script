@@ -293,20 +293,30 @@ def _run_device_diagnostics(
                 deadline = time.time() + min(max(read_timeout, 10), 25)
                 last_data_ts = time.time()
                 got_any = False
+                connection_closed = False
                 chunks: list[bytes] = []
                 while time.time() < deadline:
                     try:
                         part = sock.recv(4096)
                     except socket.timeout:
-                        part = b""
+                        part = None
                     if part:
                         got_any = True
                         chunks.append(part)
                         last_data_ts = time.time()
+                    elif part == b"":
+                        # peer закрыл TCP-сессию: дальше ждать бессмысленно
+                        connection_closed = True
+                        break
                     else:
                         if got_any and (time.time() - last_data_ts) > 0.8:
                             break
                     time.sleep(0.2)
+
+                if connection_closed:
+                    raise NetmikoAuthenticationException(
+                        f"RB941 raw-telnet: connection closed by peer while running command: {cmd}"
+                    )
 
                 clean = _strip_telnet_iac(b"".join(chunks))
                 out = clean.decode("utf-8", errors="replace")
