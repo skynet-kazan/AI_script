@@ -1,6 +1,6 @@
 device_type=raisecom_telnet
 username=admin
-password=611621Skynet
+password=611621
 ---
 /system resource print
 /interface print stats-detail where name=ether{port}
