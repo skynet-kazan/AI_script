@@ -412,6 +412,10 @@ def diagnostics_snr_s2985g_24t(conn: Any, connect_ctx: dict[str, Any], commands_
     return _commands_loop_default(conn, connect_ctx, commands_ctx)
 
 
+def diagnostics_rb941(conn: Any, connect_ctx: dict[str, Any], commands_ctx: dict[str, Any]) -> list[str]:
+    return _commands_loop_default(conn, connect_ctx, commands_ctx)
+
+
 def diagnostics_zte_c620(conn: Any, connect_ctx: dict[str, Any], commands_ctx: dict[str, Any]) -> list[str]:
     return _commands_loop_default(conn, connect_ctx, commands_ctx)
 

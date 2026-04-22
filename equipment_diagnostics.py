@@ -28,6 +28,7 @@ from model_diagnostics_algorithm import (
     diagnostics_iscom2624g_4c_ac,
     diagnostics_iscom2624g_4ge_ac,
     diagnostics_iscom_5508_olt_gp4a,
+    diagnostics_rb941,
     diagnostics_snr_s2960_24g,
     diagnostics_snr_s2985g_24t,
     diagnostics_zte_c620,
@@ -194,6 +195,8 @@ def _run_device_diagnostics(
                 body_lines = diagnostics_snr_s2960_24g(conn, connect_ctx, commands_ctx)
             case "SNR-S2985G-24T":
                 body_lines = diagnostics_snr_s2985g_24t(conn, connect_ctx, commands_ctx)
+            case "RB941":
+                body_lines = diagnostics_rb941(conn, connect_ctx, commands_ctx)
             case "ZTE C620":
                 body_lines = diagnostics_zte_c620(conn, connect_ctx, commands_ctx)
             case "ZTE C320":
