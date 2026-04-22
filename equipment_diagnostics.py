@@ -219,13 +219,14 @@ def _run_device_diagnostics(
                     )
         return body_lines
 
-    # RB941: сначала пробуем "как Raisecom OLT" (raisecom_telnet), затем fallback на generic_telnet.
+    # RB941: сначала пробуем "как Raisecom OLT" (raisecom_telnet),
+    # затем fallback на generic_telnet при auth/EOF проблемах telnet login-flow.
     if model_for_filename == "RB941" and device_type == "raisecom_telnet":
         try:
             body_lines = _run_with_device_type("raisecom_telnet")
-        except NetmikoAuthenticationException as e:
+        except (NetmikoAuthenticationException, EOFError) as e:
             print(
-                f"  [{host}] raisecom_telnet auth failed for RB941, retry with generic_telnet: {e}",
+                f"  [{host}] raisecom_telnet failed for RB941, retry with generic_telnet: {e}",
                 file=sys.stderr,
             )
             body_lines = _run_with_device_type("generic_telnet")
