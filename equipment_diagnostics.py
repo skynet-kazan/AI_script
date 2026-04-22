@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import os
+import re
+import socket
 import sys
 import time
 import threading
@@ -34,11 +36,6 @@ from model_diagnostics_algorithm import (
     diagnostics_snr_s2985g_24t,
     diagnostics_zte_c620,
 )
-
-try:
-    import telnetlib  # Python <= 3.12
-except ModuleNotFoundError:
-    telnetlib = None  # type: ignore[assignment]
 
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -159,68 +156,157 @@ def _run_device_diagnostics(
         "actual_port_value": actual_port_value,
     }
 
-    def _run_rb941_via_telnetlib() -> list[str]:
+    def _strip_telnet_iac(data: bytes) -> bytes:
+        """Удаляет telnet IAC-последовательности из потока перед декодированием."""
+        if not data:
+            return data
+        out = bytearray()
+        i = 0
+        n = len(data)
+        while i < n:
+            b = data[i]
+            if b == 255:  # IAC
+                i += 1
+                if i >= n:
+                    break
+                cmd = data[i]
+                # IAC IAC -> escaped 0xFF
+                if cmd == 255:
+                    out.append(255)
+                    i += 1
+                    continue
+                # WILL/WONT/DO/DONT + option
+                if cmd in (251, 252, 253, 254):
+                    i += 2
+                    continue
+                # SB ... IAC SE
+                if cmd == 250:
+                    i += 1
+                    while i + 1 < n:
+                        if data[i] == 255 and data[i + 1] == 240:
+                            i += 2
+                            break
+                        i += 1
+                    continue
+                i += 1
+                continue
+            out.append(b)
+            i += 1
+        return bytes(out)
+
+    def _run_rb941_via_raw_telnet() -> list[str]:
         """
-        RB941 fallback: прямой telnet (без Netmiko), если login-flow драйверов не подошёл.
+        RB941 fallback: прямой telnet через socket (без Netmiko/telnetlib).
         """
-        if telnetlib is None:
-            raise RuntimeError(
-                "telnetlib недоступен в этой версии Python; "
-                "fallback RB941 через telnetlib отключён"
-            )
         lines: list[str] = []
-        timeout = 10
-        tn = telnetlib.Telnet(host, conn_port, timeout=timeout)
+        sock = socket.create_connection((host, conn_port), timeout=10)
+        sock.settimeout(2.0)
+
+        def _recv_for(seconds: float) -> bytes:
+            end = time.time() + seconds
+            chunks: list[bytes] = []
+            while time.time() < end:
+                try:
+                    part = sock.recv(4096)
+                except socket.timeout:
+                    break
+                if not part:
+                    break
+                chunks.append(part)
+                if len(part) < 4096:
+                    # короткий фрейм: даём шанс дочитать хвост и выходим
+                    time.sleep(0.1)
+            return b"".join(chunks)
+
+        def _recv_until_markers(markers: list[str], timeout_sec: float) -> str:
+            end = time.time() + timeout_sec
+            buf = bytearray()
+            lower_markers = [m.lower() for m in markers]
+            while time.time() < end:
+                try:
+                    part = sock.recv(4096)
+                except socket.timeout:
+                    part = b""
+                if part:
+                    buf.extend(part)
+                    clean = _strip_telnet_iac(bytes(buf)).decode("utf-8", errors="replace")
+                    low = clean.lower()
+                    if any(m in low for m in lower_markers):
+                        return clean
+                else:
+                    time.sleep(0.1)
+            return _strip_telnet_iac(bytes(buf)).decode("utf-8", errors="replace")
+
         try:
-            # login prompt
-            login_prompt = tn.read_until(b"login:", timeout=5)
-            if b"login:" not in login_prompt.lower():
-                login_prompt += tn.read_until(b"Login:", timeout=3)
-            tn.write((username + "\n").encode("utf-8"))
+            # Считываем initial banner и ДОЖИДАЕМСЯ login prompt.
+            # Иначе есть риск отправить первую CLI-команду как username.
+            banner = _recv_until_markers(
+                markers=["login:", "username:", "name:"],
+                timeout_sec=6.0,
+            )
+            if not any(k in banner.lower() for k in ("login:", "username:", "name:")):
+                raise NetmikoAuthenticationException(
+                    f"RB941 raw-telnet: login prompt not found; got={banner[:200]!r}"
+                )
 
-            # password prompt
-            password_prompt = tn.read_until(b"password:", timeout=5)
-            if b"password:" not in password_prompt.lower():
-                password_prompt += tn.read_until(b"Password:", timeout=3)
-            tn.write((password + "\n").encode("utf-8"))
+            sock.sendall((username + "\n").encode("utf-8"))
+            pw_phase = _recv_until_markers(
+                markers=["password:"],
+                timeout_sec=6.0,
+            )
+            if "password:" not in pw_phase.lower():
+                raise NetmikoAuthenticationException(
+                    f"RB941 raw-telnet: password prompt not found; got={pw_phase[:200]!r}"
+                )
 
-            # Небольшая пауза на вход в shell.
-            time.sleep(1.0)
-            try:
-                tn.read_very_eager()
-            except EOFError:
-                pass
+            sock.sendall((password + "\n").encode("utf-8"))
+            post_auth = _recv_until_markers(
+                markers=[">", "#", "login failed", "incorrect", "failure"],
+                timeout_sec=6.0,
+            )
+            low_auth = post_auth.lower()
+            if any(k in low_auth for k in ("login failed", "incorrect", "failure")):
+                raise NetmikoAuthenticationException("RB941 raw-telnet: authentication failed")
+            # На MikroTik обычно shell prompt заканчивается на '>' или '#'.
+            if not re.search(r"[>#]\s*$", post_auth):
+                # Пробуем пробудить prompt Enter-ом.
+                sock.sendall(b"\n")
+                post_auth += _recv_for(1.5).decode("utf-8", errors="replace")
+                if not re.search(r"[>#]\s*$", post_auth):
+                    raise NetmikoAuthenticationException(
+                        f"RB941 raw-telnet: shell prompt not detected; got={post_auth[:200]!r}"
+                    )
 
             for cmd in commands:
-                print(f"  [{host}] Команда: {cmd} (telnetlib fallback)")
+                print(f"  [{host}] Команда: {cmd} (raw-telnet fallback)")
                 lines.append(f"\n--- Команда: {cmd} ---\n")
-                tn.write((cmd + "\n").encode("utf-8"))
+                sock.sendall((cmd + "\n").encode("utf-8"))
 
-                chunks: list[bytes] = []
+                deadline = time.time() + min(max(read_timeout, 10), 25)
                 last_data_ts = time.time()
-                deadline = time.time() + min(max(read_timeout, 10), 20)
                 got_any = False
+                chunks: list[bytes] = []
                 while time.time() < deadline:
                     try:
-                        part = tn.read_very_eager()
-                    except EOFError:
-                        break
+                        part = sock.recv(4096)
+                    except socket.timeout:
+                        part = b""
                     if part:
                         got_any = True
                         chunks.append(part)
                         last_data_ts = time.time()
                     else:
-                        # После получения первых байт ждём короткую "тишину" и считаем команду завершённой.
                         if got_any and (time.time() - last_data_ts) > 0.8:
                             break
                     time.sleep(0.2)
 
-                out = b"".join(chunks).decode("utf-8", errors="replace")
+                clean = _strip_telnet_iac(b"".join(chunks))
+                out = clean.decode("utf-8", errors="replace")
                 lines.append(out if out else "(нет вывода)\n")
-                print(f"  [{host}] Результат: {len(out)} символов (telnetlib fallback)")
+                print(f"  [{host}] Результат: {len(out)} символов (raw-telnet fallback)")
         finally:
             try:
-                tn.close()
+                sock.close()
             except OSError:
                 pass
         return lines
@@ -304,10 +390,10 @@ def _run_device_diagnostics(
                 body_lines = _run_with_device_type("generic_telnet")
             except (NetmikoAuthenticationException, EOFError) as e2:
                 print(
-                    f"  [{host}] generic_telnet failed for RB941, retry with telnetlib fallback: {e2}",
+                    f"  [{host}] generic_telnet failed for RB941, retry with raw-telnet fallback: {e2}",
                     file=sys.stderr,
                 )
-                body_lines = _run_rb941_via_telnetlib()
+                body_lines = _run_rb941_via_raw_telnet()
     else:
         body_lines = _run_with_device_type(device_type)
 
