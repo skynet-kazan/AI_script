@@ -237,10 +237,17 @@ def _run_device_diagnostics(
                     )
         return body_lines
 
-    # RB941: используем только generic_telnet.
-    # Это исключает ложные login-failure, которые давала попытка raisecom_telnet.
+    # RB941: сначала generic_telnet, при EOF/auth ошибке — fallback на raisecom_telnet.
+    # Это возвращает рабочий логин для "капризных" telnet-сессий RouterOS.
     if model_for_filename == "RB941":
-        body_lines = _run_with_device_type("generic_telnet")
+        try:
+            body_lines = _run_with_device_type("generic_telnet")
+        except (NetmikoAuthenticationException, EOFError) as e:
+            print(
+                f"  [{host}] generic_telnet failed for RB941, retry with raisecom_telnet: {e}",
+                file=sys.stderr,
+            )
+            body_lines = _run_with_device_type("raisecom_telnet")
     else:
         body_lines = _run_with_device_type(device_type)
 
