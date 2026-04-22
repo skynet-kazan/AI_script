@@ -253,11 +253,7 @@ def _run_device_diagnostics(
                 markers=["password:"],
                 timeout_sec=6.0,
             )
-            if "password:" not in pw_phase.lower():
-                raise NetmikoAuthenticationException(
-                    f"RB941 raw-telnet: password prompt not found; got={pw_phase[:200]!r}"
-                )
-
+            # На некоторых RouterOS prompt пароля не печатается — отправляем пароль в blind-режиме.
             sock.sendall((password + "\n").encode("utf-8"))
             post_auth = _recv_until_markers(
                 markers=[">", "#", "login failed", "incorrect", "failure"],
@@ -273,7 +269,8 @@ def _run_device_diagnostics(
                 post_auth += _recv_for(1.5).decode("utf-8", errors="replace")
                 if not re.search(r"[>#]\s*$", post_auth):
                     raise NetmikoAuthenticationException(
-                        f"RB941 raw-telnet: shell prompt not detected; got={post_auth[:200]!r}"
+                        f"RB941 raw-telnet: shell prompt not detected; "
+                        f"pw_phase={pw_phase[:120]!r}; post_auth={post_auth[:200]!r}"
                     )
 
             for cmd in commands:
