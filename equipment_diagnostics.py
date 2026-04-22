@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import sys
+import telnetlib
 import time
 import threading
 from datetime import datetime
@@ -154,6 +155,67 @@ def _run_device_diagnostics(
         "actual_port_value": actual_port_value,
     }
 
+    def _run_rb941_via_telnetlib() -> list[str]:
+        """
+        RB941 fallback: прямой telnet (без Netmiko), если login-flow драйверов не подошёл.
+        """
+        lines: list[str] = []
+        timeout = 10
+        tn = telnetlib.Telnet(host, conn_port, timeout=timeout)
+        try:
+            # login prompt
+            login_prompt = tn.read_until(b"login:", timeout=5)
+            if b"login:" not in login_prompt.lower():
+                login_prompt += tn.read_until(b"Login:", timeout=3)
+            tn.write((username + "\n").encode("utf-8"))
+
+            # password prompt
+            password_prompt = tn.read_until(b"password:", timeout=5)
+            if b"password:" not in password_prompt.lower():
+                password_prompt += tn.read_until(b"Password:", timeout=3)
+            tn.write((password + "\n").encode("utf-8"))
+
+            # Небольшая пауза на вход в shell.
+            time.sleep(1.0)
+            try:
+                tn.read_very_eager()
+            except EOFError:
+                pass
+
+            for cmd in commands:
+                print(f"  [{host}] Команда: {cmd} (telnetlib fallback)")
+                lines.append(f"\n--- Команда: {cmd} ---\n")
+                tn.write((cmd + "\n").encode("utf-8"))
+
+                chunks: list[bytes] = []
+                last_data_ts = time.time()
+                deadline = time.time() + min(max(read_timeout, 10), 20)
+                got_any = False
+                while time.time() < deadline:
+                    try:
+                        part = tn.read_very_eager()
+                    except EOFError:
+                        break
+                    if part:
+                        got_any = True
+                        chunks.append(part)
+                        last_data_ts = time.time()
+                    else:
+                        # После получения первых байт ждём короткую "тишину" и считаем команду завершённой.
+                        if got_any and (time.time() - last_data_ts) > 0.8:
+                            break
+                    time.sleep(0.2)
+
+                out = b"".join(chunks).decode("utf-8", errors="replace")
+                lines.append(out if out else "(нет вывода)\n")
+                print(f"  [{host}] Результат: {len(out)} символов (telnetlib fallback)")
+        finally:
+            try:
+                tn.close()
+            except OSError:
+                pass
+        return lines
+
     def _build_connect_ctx(current_device_type: str) -> dict[str, Any]:
         rt = max(read_timeout, 300) if current_device_type == "raisecom_telnet" else read_timeout
         use_timing = current_device_type in ("cisco_ios", "raisecom_telnet", "generic_telnet")
@@ -229,7 +291,14 @@ def _run_device_diagnostics(
                 f"  [{host}] raisecom_telnet failed for RB941, retry with generic_telnet: {e}",
                 file=sys.stderr,
             )
-            body_lines = _run_with_device_type("generic_telnet")
+            try:
+                body_lines = _run_with_device_type("generic_telnet")
+            except (NetmikoAuthenticationException, EOFError) as e2:
+                print(
+                    f"  [{host}] generic_telnet failed for RB941, retry with telnetlib fallback: {e2}",
+                    file=sys.stderr,
+                )
+                body_lines = _run_rb941_via_telnetlib()
     else:
         body_lines = _run_with_device_type(device_type)
 
