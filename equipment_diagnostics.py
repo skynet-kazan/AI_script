@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import os
 import sys
-import telnetlib
 import time
 import threading
 from datetime import datetime
@@ -35,6 +34,11 @@ from model_diagnostics_algorithm import (
     diagnostics_snr_s2985g_24t,
     diagnostics_zte_c620,
 )
+
+try:
+    import telnetlib  # Python <= 3.12
+except ModuleNotFoundError:
+    telnetlib = None  # type: ignore[assignment]
 
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -159,6 +163,11 @@ def _run_device_diagnostics(
         """
         RB941 fallback: прямой telnet (без Netmiko), если login-flow драйверов не подошёл.
         """
+        if telnetlib is None:
+            raise RuntimeError(
+                "telnetlib недоступен в этой версии Python; "
+                "fallback RB941 через telnetlib отключён"
+            )
         lines: list[str] = []
         timeout = 10
         tn = telnetlib.Telnet(host, conn_port, timeout=timeout)
