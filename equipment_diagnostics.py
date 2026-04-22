@@ -218,30 +218,9 @@ def _run_device_diagnostics(
                     )
         return body_lines
 
-    # RB941: для каждого telnet-драйвера делаем до 2 попыток входа.
-    # На этом устройстве первая попытка может быть "холостой" (как при ручном логине).
+    # RB941: используем SSH-драйвер MikroTik (стабильнее telnet для этого устройства).
     if model_for_filename == "RB941":
-        rb941_errors: list[str] = []
-        for current_type in ("raisecom_telnet", "generic_telnet"):
-            success = False
-            for attempt in (1, 2):
-                try:
-                    print(f"  [{host}] RB941 login attempt {attempt}/2 via {current_type}...")
-                    body_lines = _run_with_device_type(current_type)
-                    success = True
-                    break
-                except (NetmikoAuthenticationException, EOFError) as e:
-                    msg = f"{current_type} attempt {attempt}/2 failed: {e}"
-                    rb941_errors.append(msg)
-                    print(f"  [{host}] {msg}", file=sys.stderr)
-                    if attempt == 1:
-                        time.sleep(1)
-            if success:
-                break
-        else:
-            raise NetmikoAuthenticationException(
-                "RB941 login failed after retries: " + " | ".join(rb941_errors)
-            )
+        body_lines = _run_with_device_type("mikrotik_routeros")
     else:
         body_lines = _run_with_device_type(device_type)
 

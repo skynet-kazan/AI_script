@@ -1,4 +1,4 @@
-device_type=generic_telnet
+device_type=mikrotik_routeros
 username=admin
 password=611621
 ---
