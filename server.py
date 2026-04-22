@@ -265,10 +265,10 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
             addr,
         )
     except (NetmikoAuthenticationException, NetmikoTimeoutException) as e:
-        print(f"[{addr}] Ошибка SSH: {e}", file=sys.stderr)
+        print(f"[{addr}] Ошибка подключения Netmiko: {e}", file=sys.stderr)
         _send_response(
             conn,
-            f"ERROR: SSH: {e!s}\n".encode("utf-8"),
+            f"ERROR: NETMIKO_CONNECTION: {e!s}\n".encode("utf-8"),
             addr,
         )
     except Exception as exc:
