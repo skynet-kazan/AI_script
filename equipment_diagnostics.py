@@ -148,7 +148,7 @@ def _run_device_diagnostics(
 
     if device_type == "raisecom_telnet":
         read_timeout = max(read_timeout, 300)
-    use_timing = device_type in ("cisco_ios", "raisecom_telnet")
+    use_timing = device_type in ("cisco_ios", "raisecom_telnet", "generic_telnet")
     expect_flexible = device_type == "raisecom_roap"
     expect_string = r'\S+[>#]\s*$|\(\w+[^)]*\)#\s*$' if expect_flexible else None
 
