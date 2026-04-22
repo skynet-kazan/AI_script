@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
 import threading
 from datetime import datetime
@@ -146,19 +147,6 @@ def _run_device_diagnostics(
 
     session_header = f"=== {model} | {host} | {datetime.now().isoformat()} ===\n"
 
-    if device_type == "raisecom_telnet":
-        read_timeout = max(read_timeout, 300)
-    use_timing = device_type in ("cisco_ios", "raisecom_telnet", "generic_telnet")
-    expect_flexible = device_type == "raisecom_roap"
-    expect_string = r'\S+[>#]\s*$|\(\w+[^)]*\)#\s*$' if expect_flexible else None
-
-    connect_ctx: dict[str, Any] = {
-        "host": host,
-        "device_type": device_type,
-        "read_timeout": read_timeout,
-        "use_timing": use_timing,
-        "expect_string": expect_string,
-    }
     commands_ctx: dict[str, Any] = {
         "commands": commands,
         "run_params": run_params,
@@ -166,53 +154,83 @@ def _run_device_diagnostics(
         "actual_port_value": actual_port_value,
     }
 
-    print(f"  [{host}] Подключение к устройству...")
-    with ConnectHandler(**device) as conn:
-        print(f"  [{host}] Подключение успешно.")
-        if use_timing:
-            time.sleep(2 if device_type == "cisco_ios" else 1)
+    def _build_connect_ctx(current_device_type: str) -> dict[str, Any]:
+        rt = max(read_timeout, 300) if current_device_type == "raisecom_telnet" else read_timeout
+        use_timing = current_device_type in ("cisco_ios", "raisecom_telnet", "generic_telnet")
+        expect_flexible = current_device_type == "raisecom_roap"
+        expect_string = r'\S+[>#]\s*$|\(\w+[^)]*\)#\s*$' if expect_flexible else None
+        return {
+            "host": host,
+            "device_type": current_device_type,
+            "read_timeout": rt,
+            "use_timing": use_timing,
+            "expect_string": expect_string,
+        }
 
-        match model_for_filename:
-            case "BDCOM GP3600-04":
-                body_lines = diagnostics_bdcom_gp3600_04(conn, connect_ctx, commands_ctx)
-            case "BDCOM GP3600-08":
-                body_lines = diagnostics_bdcom_gp3600_08(conn, connect_ctx, commands_ctx)
-            case "BDCOM GP3600-16":
-                body_lines = diagnostics_bdcom_gp3600_16(conn, connect_ctx, commands_ctx)
-            case "DES 1228-ME":
-                body_lines = diagnostics_des_1228_me(conn, connect_ctx, commands_ctx)
-            case "ISCOM 5508 OLT-gp4a":
-                body_lines = diagnostics_iscom_5508_olt_gp4a(conn, connect_ctx, commands_ctx)
-            case "ISCOM2110EA-MA":
-                body_lines = diagnostics_iscom2110ea_ma(conn, connect_ctx, commands_ctx)
-            case "ISCOM2128EA-MA":
-                body_lines = diagnostics_iscom2128ea_ma(conn, connect_ctx, commands_ctx)
-            case "ISCOM2624G-4GE-AC":
-                body_lines = diagnostics_iscom2624g_4ge_ac(conn, connect_ctx, commands_ctx)
-            case "ISCOM2624G-4C-AC":
-                body_lines = diagnostics_iscom2624g_4c_ac(conn, connect_ctx, commands_ctx)
-            case "SNR-S2960-24G":
-                body_lines = diagnostics_snr_s2960_24g(conn, connect_ctx, commands_ctx)
-            case "SNR-S2985G-24T":
-                body_lines = diagnostics_snr_s2985g_24t(conn, connect_ctx, commands_ctx)
-            case "RB941":
-                body_lines = diagnostics_rb941(conn, connect_ctx, commands_ctx)
-            case "ZTE C620":
-                body_lines = diagnostics_zte_c620(conn, connect_ctx, commands_ctx)
-            case "ZTE C320":
-                # Для C320 используем тот же алгоритм отправки команд, что и для C620.
-                body_lines = diagnostics_zte_c620(conn, connect_ctx, commands_ctx)
-            case "cisco_ios":
-                body_lines = diagnostics_cisco_ios(conn, connect_ctx, commands_ctx)
-            case "cisco_asr1002":
-                body_lines = diagnostics_cisco_asr1002(conn, connect_ctx, commands_ctx)
-            case "generic":
-                body_lines = diagnostics_generic(conn, connect_ctx, commands_ctx)
-            case _:
-                raise ValueError(
-                    f"Нет алгоритма диагностики для модели сценария: {model_for_filename!r}. "
-                    "Добавьте case и diagnostics_* в equipment_diagnostics.py и model_diagnostics_algorithm.py."
-                )
+    def _run_with_device_type(current_device_type: str) -> list[str]:
+        device_current = {**device, "device_type": current_device_type}
+        connect_ctx = _build_connect_ctx(current_device_type)
+        print(f"  [{host}] Подключение к устройству (device_type={current_device_type})...")
+        with ConnectHandler(**device_current) as conn:
+            print(f"  [{host}] Подключение успешно (device_type={current_device_type}).")
+            if connect_ctx["use_timing"]:
+                time.sleep(2 if current_device_type == "cisco_ios" else 1)
+
+            match model_for_filename:
+                case "BDCOM GP3600-04":
+                    body_lines = diagnostics_bdcom_gp3600_04(conn, connect_ctx, commands_ctx)
+                case "BDCOM GP3600-08":
+                    body_lines = diagnostics_bdcom_gp3600_08(conn, connect_ctx, commands_ctx)
+                case "BDCOM GP3600-16":
+                    body_lines = diagnostics_bdcom_gp3600_16(conn, connect_ctx, commands_ctx)
+                case "DES 1228-ME":
+                    body_lines = diagnostics_des_1228_me(conn, connect_ctx, commands_ctx)
+                case "ISCOM 5508 OLT-gp4a":
+                    body_lines = diagnostics_iscom_5508_olt_gp4a(conn, connect_ctx, commands_ctx)
+                case "ISCOM2110EA-MA":
+                    body_lines = diagnostics_iscom2110ea_ma(conn, connect_ctx, commands_ctx)
+                case "ISCOM2128EA-MA":
+                    body_lines = diagnostics_iscom2128ea_ma(conn, connect_ctx, commands_ctx)
+                case "ISCOM2624G-4GE-AC":
+                    body_lines = diagnostics_iscom2624g_4ge_ac(conn, connect_ctx, commands_ctx)
+                case "ISCOM2624G-4C-AC":
+                    body_lines = diagnostics_iscom2624g_4c_ac(conn, connect_ctx, commands_ctx)
+                case "SNR-S2960-24G":
+                    body_lines = diagnostics_snr_s2960_24g(conn, connect_ctx, commands_ctx)
+                case "SNR-S2985G-24T":
+                    body_lines = diagnostics_snr_s2985g_24t(conn, connect_ctx, commands_ctx)
+                case "RB941":
+                    body_lines = diagnostics_rb941(conn, connect_ctx, commands_ctx)
+                case "ZTE C620":
+                    body_lines = diagnostics_zte_c620(conn, connect_ctx, commands_ctx)
+                case "ZTE C320":
+                    # Для C320 используем тот же алгоритм отправки команд, что и для C620.
+                    body_lines = diagnostics_zte_c620(conn, connect_ctx, commands_ctx)
+                case "cisco_ios":
+                    body_lines = diagnostics_cisco_ios(conn, connect_ctx, commands_ctx)
+                case "cisco_asr1002":
+                    body_lines = diagnostics_cisco_asr1002(conn, connect_ctx, commands_ctx)
+                case "generic":
+                    body_lines = diagnostics_generic(conn, connect_ctx, commands_ctx)
+                case _:
+                    raise ValueError(
+                        f"Нет алгоритма диагностики для модели сценария: {model_for_filename!r}. "
+                        "Добавьте case и diagnostics_* в equipment_diagnostics.py и model_diagnostics_algorithm.py."
+                    )
+        return body_lines
+
+    # RB941: сначала пробуем "как Raisecom OLT" (raisecom_telnet), затем fallback на generic_telnet.
+    if model_for_filename == "RB941" and device_type == "raisecom_telnet":
+        try:
+            body_lines = _run_with_device_type("raisecom_telnet")
+        except NetmikoAuthenticationException as e:
+            print(
+                f"  [{host}] raisecom_telnet auth failed for RB941, retry with generic_telnet: {e}",
+                file=sys.stderr,
+            )
+            body_lines = _run_with_device_type("generic_telnet")
+    else:
+        body_lines = _run_with_device_type(device_type)
 
     return [session_header, *body_lines]
 
