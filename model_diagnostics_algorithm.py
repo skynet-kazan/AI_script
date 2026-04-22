@@ -432,18 +432,6 @@ def diagnostics_rb941(conn: Any, connect_ctx: dict[str, Any], commands_ctx: dict
             expect_string=expect_string,
             read_timeout=read_timeout,
         )
-        low = (out or "").lower()
-        # Защита от ситуации, когда устройство вернулось в login-поток:
-        # не продолжаем отправлять следующие команды как "username".
-        if (
-            "login:" in low
-            or "password:" in low
-            or "incorrect username or password" in low
-            or "login failed" in low
-        ):
-            raise NetmikoAuthenticationException(
-                "RB941 telnet session is not authenticated (device returned login/password prompt)"
-            )
         lines.append(out)
         print(f"  [{host}] Результат: {len(out)} символов")
     return lines
