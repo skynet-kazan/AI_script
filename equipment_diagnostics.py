@@ -218,17 +218,30 @@ def _run_device_diagnostics(
                     )
         return body_lines
 
-    # RB941: сначала raisecom_telnet (как у вас исторически логинилось),
-    # при EOF/auth ошибке — fallback на generic_telnet.
+    # RB941: для каждого telnet-драйвера делаем до 2 попыток входа.
+    # На этом устройстве первая попытка может быть "холостой" (как при ручном логине).
     if model_for_filename == "RB941":
-        try:
-            body_lines = _run_with_device_type("raisecom_telnet")
-        except (NetmikoAuthenticationException, EOFError) as e:
-            print(
-                f"  [{host}] raisecom_telnet failed for RB941, retry with generic_telnet: {e}",
-                file=sys.stderr,
+        rb941_errors: list[str] = []
+        for current_type in ("raisecom_telnet", "generic_telnet"):
+            success = False
+            for attempt in (1, 2):
+                try:
+                    print(f"  [{host}] RB941 login attempt {attempt}/2 via {current_type}...")
+                    body_lines = _run_with_device_type(current_type)
+                    success = True
+                    break
+                except (NetmikoAuthenticationException, EOFError) as e:
+                    msg = f"{current_type} attempt {attempt}/2 failed: {e}"
+                    rb941_errors.append(msg)
+                    print(f"  [{host}] {msg}", file=sys.stderr)
+                    if attempt == 1:
+                        time.sleep(1)
+            if success:
+                break
+        else:
+            raise NetmikoAuthenticationException(
+                "RB941 login failed after retries: " + " | ".join(rb941_errors)
             )
-            body_lines = _run_with_device_type("generic_telnet")
     else:
         body_lines = _run_with_device_type(device_type)
 
