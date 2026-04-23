@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 from diagnostic_function import (
+    extract_unique_macs_from_cli_table,
     dlink_post_state_enable_flow as post_state_enable_flow,
     dlink_run_fdb_vlan_mac_poll as run_fdb_vlan_mac_poll,
     handle_cisco_arp_clear_then_show_command,
@@ -424,14 +425,37 @@ def diagnostics_rb941(conn: Any, connect_ctx: dict[str, Any], commands_ctx: dict
     for cmd in commands_ctx["commands"]:
         print(f"  [{host}] Команда: {cmd}")
         lines.append(f"\n--- Команда: {cmd} ---\n")
-        out = netmiko_send_adaptive(
-            conn,
-            cmd,
-            device_type=device_type,
-            use_timing=use_timing,
-            expect_string=expect_string,
-            read_timeout=read_timeout,
-        )
+        cmd_lower = cmd.strip().lower()
+        if cmd_lower.startswith("/interface bridge host print"):
+            # На RB941 таблица bridge-host иногда появляется с задержкой.
+            # Поллим до 20 попыток или пока не увидим хотя бы один MAC.
+            out = ""
+            last = ""
+            for attempt in range(20):
+                out_i = netmiko_send_adaptive(
+                    conn,
+                    cmd,
+                    device_type=device_type,
+                    use_timing=use_timing,
+                    expect_string=expect_string,
+                    read_timeout=read_timeout,
+                )
+                last = out_i
+                if extract_unique_macs_from_cli_table(out_i):
+                    out = out_i
+                    break
+                if attempt < 19:
+                    time.sleep(1)
+            out = out or last
+        else:
+            out = netmiko_send_adaptive(
+                conn,
+                cmd,
+                device_type=device_type,
+                use_timing=use_timing,
+                expect_string=expect_string,
+                read_timeout=read_timeout,
+            )
         lines.append(out)
         print(f"  [{host}] Результат: {len(out)} символов")
     return lines
