@@ -431,6 +431,7 @@ def diagnostics_rb941(conn: Any, connect_ctx: dict[str, Any], commands_ctx: dict
             # Поллим до 20 попыток или пока не увидим хотя бы один MAC.
             out = ""
             last = ""
+            port_value = str(commands_ctx["run_params"].get("port", "")).strip()
             for attempt in range(20):
                 out_i = netmiko_send_adaptive(
                     conn,
@@ -447,6 +448,54 @@ def diagnostics_rb941(conn: Any, connect_ctx: dict[str, Any], commands_ctx: dict
                 if attempt < 19:
                     time.sleep(1)
             out = out or last
+            if not extract_unique_macs_from_cli_table(out):
+                # Fallback: на некоторых версиях ROS фильтр `where on-interface=...`
+                # иногда отдаёт только шапку. Пробуем общий вывод и фильтруем по порту.
+                fallback_cmd = "/interface bridge host print where !local without-paging"
+                fallback_last = ""
+                for attempt in range(10):
+                    fb = netmiko_send_adaptive(
+                        conn,
+                        fallback_cmd,
+                        device_type=device_type,
+                        use_timing=use_timing,
+                        expect_string=expect_string,
+                        read_timeout=read_timeout,
+                    )
+                    fallback_last = fb
+                    lines_fb = fb.splitlines()
+                    filtered = [ln for ln in lines_fb if f"ether{port_value}" in ln]
+                    if filtered:
+                        out = "\n".join([lines_fb[0], lines_fb[1], *filtered]) if len(lines_fb) >= 2 else "\n".join(filtered)
+                        break
+                    if extract_unique_macs_from_cli_table(fb):
+                        out = fb
+                        break
+                    if attempt < 9:
+                        time.sleep(1)
+                if not out:
+                    out = fallback_last
+            if not extract_unique_macs_from_cli_table(out):
+                # Дополнительный fallback: terse-формат RouterOS проще для машинного разбора.
+                terse_cmd = f"/interface bridge host print terse where on-interface=ether{port_value} and !local"
+                terse_last = ""
+                for attempt in range(10):
+                    t_out = netmiko_send_adaptive(
+                        conn,
+                        terse_cmd,
+                        device_type=device_type,
+                        use_timing=use_timing,
+                        expect_string=expect_string,
+                        read_timeout=read_timeout,
+                    )
+                    terse_last = t_out
+                    if extract_unique_macs_from_cli_table(t_out):
+                        out = t_out
+                        break
+                    if attempt < 9:
+                        time.sleep(1)
+                if not out:
+                    out = terse_last or out
         else:
             out = netmiko_send_adaptive(
                 conn,
