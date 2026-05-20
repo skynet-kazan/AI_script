@@ -184,7 +184,7 @@ def _run_device_diagnostics(
                     body_lines = diagnostics_bdcom_gp3600_16(conn, connect_ctx, commands_ctx)
                 case "DES 1228-ME":
                     body_lines = diagnostics_des_1228_me(conn, connect_ctx, commands_ctx)
-                case "ISCOM 5508 OLT-gp4a":
+                case "ISCOM 5504 OLT" | "ISCOM 5508 OLT-gp4a":
                     body_lines = diagnostics_iscom_5508_olt_gp4a(conn, connect_ctx, commands_ctx)
                 case "ISCOM2110EA-MA":
                     body_lines = diagnostics_iscom2110ea_ma(conn, connect_ctx, commands_ctx)
