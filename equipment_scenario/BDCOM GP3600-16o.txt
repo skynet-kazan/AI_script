@@ -1,0 +1,26 @@
+device_type=cisco_ios
+username=admin
+password=611621Skynet
+---
+enable
+terminal length 0
+sh ver
+sh int gpoN {port}
+sh gpon int gpoN {port} onu optical-transceiver-diagnosis
+sh gpon optical-transceiver-diagnosis int gpoN {port}
+sh gpon int gpoN {port} onu port 1 st
+sh gpon int gpoN {port} onu basic-info
+sh mac address-table int gpoN {port}
+sh vlan id | include {gpon_port}
+sh mac address-table vlan {outer_vlan} | include g0/1
+sh mac address-table vlan {outer_vlan} | include g0/2
+sh mac address-table vlan {outer_vlan} | include g0/3
+sh mac address-table vlan {outer_vlan} | include g0/4
+sh mac address-table vlan {outer_vlan} | include g0/5
+sh mac address-table vlan {outer_vlan} | include g0/6
+sh mac address-table vlan {outer_vlan} | include g0/7
+sh mac address-table vlan {outer_vlan} | include g0/8
+sh mac address-table vlan {outer_vlan} | include tg0/1
+sh mac address-table vlan {outer_vlan} | include tg0/2
+sh mac address-table vlan {outer_vlan} | include tg0/3
+sh mac address-table vlan {outer_vlan} | include tg0/4

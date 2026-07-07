@@ -1,0 +1,11 @@
+device_type=zte_zxros
+username=admin
+password=611621Skynet
+---
+enable
+sh software
+sh gpon remote-onu int eth gpon-onu_{port}
+sh gpon onu detail-info gpon-onu_{port}
+sh pon power attenuation gpon-onu-{port}
+sh mac vlan {vlan}
+sh mac gpon onu gpon-onu_{port}

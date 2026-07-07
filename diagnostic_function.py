@@ -60,11 +60,26 @@ def netmiko_send_adaptive(
 # --- Cisco ARP ---
 
 
-def find_cisco_arp_interface_by_vlan(output: str, vlan: str) -> Optional[str]:
-    vlan_req = str(vlan).strip()
-    if not vlan_req.isdigit():
+def find_cisco_arp_interface_by_vlan(
+    output: str, vlan: str, outer_vlan: str | None = None
+) -> Optional[str]:
+    """
+    Ищет интерфейс в выводе sh arp по суффиксу subinterface.
+
+    Без OuterVlan: TenGigabitEthernet0/1/0.1006 — суффикс равен основному VLAN.
+    С OuterVlan: TenGigabitEthernet0/1/0.30011006 — 4 цифры OuterVlan + основной VLAN.
+    """
+    main_vlan = str(vlan).strip()
+    if not main_vlan.isdigit():
         return None
-    vlan_req_int = int(vlan_req)
+    outer = str(outer_vlan or "").strip()
+    if outer:
+        if not outer.isdigit():
+            return None
+        expected_suffix = f"{outer}{main_vlan}"
+    else:
+        expected_suffix = main_vlan
+
     for raw in (output or "").splitlines():
         line = raw.strip()
         if not line or line.startswith("Protocol"):
@@ -76,7 +91,12 @@ def find_cisco_arp_interface_by_vlan(output: str, vlan: str) -> Optional[str]:
         if "." not in iface:
             continue
         suffix = iface.rsplit(".", 1)[-1]
-        if suffix.isdigit() and int(suffix) == vlan_req_int:
+        if not suffix.isdigit():
+            continue
+        if outer:
+            if suffix == expected_suffix:
+                return iface
+        elif int(suffix) == int(main_vlan):
             return iface
     return None
 
@@ -103,13 +123,19 @@ def run_cisco_arp_clear_then_show(
     read_timeout: int = 120,
 ) -> None:
     vlan = str(params.get("client_vlan", "") or params.get("vlan", ""))
+    outer_vlan = str(params.get("outer_vlan", "") or "").strip() or None
     arp_cmd = substitute_params("sh arp | include {vlan}", params)
     full_output_lines.append(f"\n--- Команда: {arp_cmd} ---\n")
     out = conn.send_command(arp_cmd, read_timeout=read_timeout)
-    interface = find_cisco_arp_interface_by_vlan(out, vlan)
+    interface = find_cisco_arp_interface_by_vlan(out, vlan, outer_vlan=outer_vlan)
     if not interface:
+        if outer_vlan:
+            hint = f"outer={outer_vlan}, vlan={vlan} (ожидается .{outer_vlan}{vlan})"
+        else:
+            hint = f"vlan={vlan}"
         full_output_lines.append(
-            f"(после команды sh arp | include {vlan}: подходящий интерфейс не найден, clear не выполняется)\n"
+            f"(после команды sh arp | include {vlan}: подходящий интерфейс не найден "
+            f"({hint}), clear не выполняется)\n"
         )
         return
     filtered = filter_cisco_arp_output_by_interface(out, interface)

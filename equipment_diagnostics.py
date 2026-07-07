@@ -41,6 +41,29 @@ SCENARIO_DIR = os.path.join(_SCRIPT_DIR, "equipment_scenario")
 OUTPUT_DIR = os.path.join(_SCRIPT_DIR, "diagnostics_output")
 _OUTPUT_FILE_LOCK = threading.Lock()
 
+_OUTER_VLAN_EQUIPMENT_MODELS = frozenset({
+    "BDCOM GP3600-04",
+    "BDCOM GP3600-08",
+    "BDCOM GP3600-16",
+    "ZTE C620",
+    "ZTE C320",
+})
+
+
+def _scenario_basename_for_model(model_for_filename: str, outer_vlan: str) -> str:
+    """Для BDCOM/ZTE с OuterVlan используется сценарий с суффиксом «o» в имени файла."""
+    if outer_vlan and model_for_filename in _OUTER_VLAN_EQUIPMENT_MODELS:
+        return f"{model_for_filename}o"
+    return model_for_filename
+
+
+def _gpon_port_from_port(port: str) -> str:
+    """GPON-порт ONU: часть port до «:» (например 0/1:2 -> 0/1)."""
+    p = (port or "").strip()
+    if ":" in p:
+        return p.split(":", 1)[0]
+    return p
+
 
 def _next_output_filename(out_dir: str) -> str:
     """
@@ -113,8 +136,10 @@ def _run_device_diagnostics(
     и выполняет сценарий.
     """
     model_for_filename = (model or "").replace("/", "-")
+    outer_vlan = str(params.get("outer_vlan") or "").strip()
+    scenario_basename = _scenario_basename_for_model(model_for_filename, outer_vlan)
 
-    scenario_path = os.path.join(SCENARIO_DIR, f"{model_for_filename}.txt")
+    scenario_path = os.path.join(SCENARIO_DIR, f"{scenario_basename}.txt")
     if not os.path.isfile(scenario_path):
         raise FileNotFoundError(f"Сценарий не найден: {scenario_path}")
 
@@ -236,6 +261,7 @@ def run_diagnostics(params: dict[str, Any], out_path: str | None = None) -> tupl
     - model: модель конечного оборудования (имя сценария без .txt), по умолчанию \"generic\"
     - equipment_ip: обязательно, IP или хост конечного оборудования
     - client_ip, client_vlan, port: параметры клиента/порта (допускаются строки по умолчанию \"-\")
+    - outer_vlan: опционально, OuterVlan (без префикса «o»; приходит из TCP-поля oNNNN)
     - output_dir: опционально, директория для файла вывода (по умолчанию diagnostics_output)
     - router_model, router_ip: опционально, вторая цель (маршрутизатор)
 
@@ -249,6 +275,7 @@ def run_diagnostics(params: dict[str, Any], out_path: str | None = None) -> tupl
         raise ValueError("params['equipment_ip'] обязателен")
 
     client_ip = str(params.get("client_ip") or "-")
+    outer_vlan = str(params.get("outer_vlan") or "").strip()
     client_vlan = str(params.get("client_vlan") or "-")
     port = str(params.get("port") or "-")
     output_dir = params.get("output_dir")
@@ -260,19 +287,27 @@ def run_diagnostics(params: dict[str, Any], out_path: str | None = None) -> tupl
     router_ip = str(ri).strip() or None if ri is not None else None
 
     port_olt = port.rsplit("/", 1)[0] if port and port.count("/") >= 2 else (port or "")
+    gpon_port = _gpon_port_from_port(port)
     params = {
         "model": model,
         "equipment_ip": equipment_ip,
         "router_ip": router_ip or "",
         "client_ip": client_ip,
+        "outer_vlan": outer_vlan,
         "vlan": client_vlan,
         "port": port,
         "port_olt": port_olt,
+        "gpon_port": gpon_port,
     }
 
     all_lines: list[str] = []
     all_lines.append(f"=== Диагностика клиента | {datetime.now().isoformat()} ===\n")
-    all_lines.append(f"Клиент: {client_ip}  VLAN: {client_vlan}  Порт: {port}\n")
+    if outer_vlan:
+        all_lines.append(
+            f"Клиент: {client_ip}  OuterVlan: {outer_vlan}  VLAN: {client_vlan}  Порт: {port}\n"
+        )
+    else:
+        all_lines.append(f"Клиент: {client_ip}  VLAN: {client_vlan}  Порт: {port}\n")
 
     try:
         print("--- Оборудование ---")

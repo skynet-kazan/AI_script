@@ -1,4 +1,5 @@
 import os
+import re
 import select
 import socket
 import sys
@@ -17,21 +18,47 @@ PORT = 5000
 
 # Версия протокола диагностики по TCP. Смените при изменении формата ответов.
 # Проверка с клиента: отправить одну строку «protocol» — в ответ будет diagnostics-tcp-rev-N.
-DIAGNOSTICS_TCP_PROTOCOL_REV = 2
+DIAGNOSTICS_TCP_PROTOCOL_REV = 3
 
 # Команда «stop»: выставляется в потоке клиента; главный поток выходит из accept — процесс завершается без os._exit.
 _shutdown_requested = threading.Event()
 
-PARAM_NAMES = (
-    "model",
-    "equipment_ip",
-    "router_model",
-    "router_ip",
-    "client_ip",
-    "client_vlan",
-    "port",
-)
-NUM_PARAMS = len(PARAM_NAMES)
+_OUTER_VLAN_FIELD_RE = re.compile(r"^o(\d+)$", re.IGNORECASE)
+
+
+def _parse_diagnostic_request(parts: list[str]) -> dict[str, str]:
+    """
+    Разбор TCP-запроса диагностики.
+
+    Без OuterVlan (7 полей):
+      model, equipment_ip, router_model, router_ip, client_ip, vlan, port
+
+    С OuterVlan (8 полей, поле oNNNN перед основным VLAN):
+      model, equipment_ip, router_model, router_ip, client_ip, o3001, vlan, port
+    """
+    while len(parts) < 7:
+        parts.append("")
+
+    outer_vlan = ""
+    field5 = parts[5].strip()
+    if len(parts) >= 8 and (m := _OUTER_VLAN_FIELD_RE.match(field5)):
+        outer_vlan = m.group(1)
+        client_vlan = parts[6].strip() or "-"
+        port = parts[7].strip() or "-"
+    else:
+        client_vlan = field5 or "-"
+        port = parts[6].strip() or "-"
+
+    return {
+        "model": parts[0].strip() or "generic",
+        "equipment_ip": parts[1].strip(),
+        "router_model": parts[2].strip(),
+        "router_ip": parts[3].strip(),
+        "client_ip": parts[4].strip() or "-",
+        "outer_vlan": outer_vlan,
+        "client_vlan": client_vlan,
+        "port": port,
+    }
 
 
 # --- Очередь: не запускать параллельно диагностику, если занят equipment_ip или router_ip ---
@@ -198,11 +225,8 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
             return
 
         parts = [p.strip() for p in line.split(",")]
-        while len(parts) < NUM_PARAMS:
-            parts.append("")
-        lines = parts[:NUM_PARAMS]
-        params = dict(zip(PARAM_NAMES, lines))
-        model = params["model"] or "generic"
+        params = _parse_diagnostic_request(parts)
+        model = params["model"]
         equipment_ip = params["equipment_ip"]
         if not equipment_ip:
             _send_response(conn, b"ERROR: equipment_ip is required\n", addr)
@@ -211,9 +235,10 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
         router_model = params["router_model"].strip() or None
         router_ip_raw = params["router_ip"].strip() or ""
         router_ip = _normalize_router_host(router_ip_raw) or None
-        client_ip = params["client_ip"] or "-"
-        client_vlan = params["client_vlan"] or "-"
-        port = params["port"] or "-"
+        client_ip = params["client_ip"]
+        outer_vlan = params["outer_vlan"]
+        client_vlan = params["client_vlan"]
+        port = params["port"]
 
         target_ips = _diagnostic_target_ips(equipment_ip, router_ip)
         immediate, ticket, position, wait_ev = _enqueue_or_acquire_ips(target_ips)
@@ -234,9 +259,10 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
 
         reserved_ips = target_ips
 
+        outer_info = f", outer_vlan={outer_vlan}" if outer_vlan else ""
         print(
             f"[{addr}] Подключение успешно. log_id={log_id} Параметры: equipment={equipment_ip}, "
-            f"router={router_ip or '-'}"
+            f"router={router_ip or '-'}, vlan={client_vlan}{outer_info}, port={port}"
         )
         print(f"[{addr}] Запуск диагностики...")
 
@@ -245,6 +271,7 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
                 "model": model,
                 "equipment_ip": equipment_ip,
                 "client_ip": client_ip,
+                "outer_vlan": outer_vlan,
                 "client_vlan": client_vlan,
                 "port": port,
                 "router_model": router_model,
