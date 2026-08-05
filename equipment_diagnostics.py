@@ -29,6 +29,7 @@ from model_diagnostics_algorithm import (
     diagnostics_iscom2624g_4c_ac,
     diagnostics_iscom2624g_4ge_ac,
     diagnostics_iscom_5508_olt_gp4a,
+    diagnostics_mikrotik_wireless_60g,
     diagnostics_rb941,
     diagnostics_snr_s2960_24g,
     diagnostics_snr_s2985g_24t,
@@ -49,9 +50,14 @@ _OUTER_VLAN_EQUIPMENT_MODELS = frozenset({
     "ZTE C320",
 })
 
+MIKROTIK_WIRELESS_60G_MODEL = "Mikrotik Wireless 60G"
+MIKROTIK_WIRELESS_60G_SCENARIO = "Mikrotik_Wireless_60G"
+
 
 def _scenario_basename_for_model(model_for_filename: str, outer_vlan: str) -> str:
     """Для BDCOM/ZTE с OuterVlan используется сценарий с суффиксом «o» в имени файла."""
+    if model_for_filename == MIKROTIK_WIRELESS_60G_MODEL:
+        return MIKROTIK_WIRELESS_60G_SCENARIO
     if outer_vlan and model_for_filename in _OUTER_VLAN_EQUIPMENT_MODELS:
         return f"{model_for_filename}o"
     return model_for_filename
@@ -123,6 +129,52 @@ def _parse_scenario(path: str) -> tuple[dict[str, str], list[str]]:
         if line.strip() and not line.strip().startswith("#")
     ]
     return credentials, commands
+
+
+def _write_diagnostics_output(full_output: str, out_path: str | None, output_dir: str | None) -> str:
+    out_dir = output_dir or OUTPUT_DIR
+    os.makedirs(out_dir, exist_ok=True)
+    if out_path:
+        final_path = out_path
+    else:
+        with _OUTPUT_FILE_LOCK:
+            filename = _next_output_filename(out_dir)
+            final_path = os.path.join(out_dir, filename)
+    with open(final_path, "w", encoding="utf-8") as f:
+        f.write(full_output)
+    print(f"Вывод сохранён: {final_path}")
+    return final_path
+
+
+def _append_device_section(
+    all_lines: list[str],
+    *,
+    title: str,
+    host: str,
+) -> None:
+    all_lines.append("\n\n")
+    all_lines.append("=" * 60 + "\n")
+    all_lines.append(f"{title} ({host})\n")
+    all_lines.append("=" * 60 + "\n")
+
+
+def _run_device_diagnostics_soft(
+    model: str,
+    host: str,
+    params: dict[str, Any],
+    *,
+    unavailable_msg: str,
+    read_timeout: int = 120,
+) -> list[str]:
+    """Диагностика устройства; при ошибке подключения возвращает текст «AP/ST недоступна»."""
+    try:
+        return _run_device_diagnostics(model, host, params, read_timeout=read_timeout)
+    except (NetmikoAuthenticationException, NetmikoTimeoutException) as e:
+        print(f"  [{host}] {unavailable_msg}: {e}")
+        return [f"\n{unavailable_msg}\n", f"(детали: {e})\n"]
+    except OSError as e:
+        print(f"  [{host}] {unavailable_msg}: {e}")
+        return [f"\n{unavailable_msg}\n", f"(детали: {e})\n"]
 
 
 def _run_device_diagnostics(
@@ -225,6 +277,8 @@ def _run_device_diagnostics(
                     body_lines = diagnostics_snr_s2985g_24t(conn, connect_ctx, commands_ctx)
                 case "RB941":
                     body_lines = diagnostics_rb941(conn, connect_ctx, commands_ctx)
+                case "Mikrotik Wireless 60G":
+                    body_lines = diagnostics_mikrotik_wireless_60g(conn, connect_ctx, commands_ctx)
                 case "ZTE C620":
                     body_lines = diagnostics_zte_c620(conn, connect_ctx, commands_ctx)
                 case "ZTE C320":
@@ -243,13 +297,92 @@ def _run_device_diagnostics(
                     )
         return body_lines
 
-    # RB941: используем SSH-драйвер MikroTik (стабильнее telnet для этого устройства).
-    if model_for_filename == "RB941":
+    # MikroTik: SSH-драйвер RouterOS (RB941 и 60G-антенны).
+    if model_for_filename in ("RB941", MIKROTIK_WIRELESS_60G_MODEL):
         body_lines = _run_with_device_type("mikrotik_routeros")
     else:
         body_lines = _run_with_device_type(device_type)
 
     return [session_header, *body_lines]
+
+
+def _run_mikrotik_wireless_60g_diagnostics(
+    params: dict[str, Any],
+    out_path: str | None = None,
+) -> tuple[str, str]:
+    """Диагностика Mikrotik Wireless 60G: AP, ST (мягкий fail), затем маршрутизатор."""
+    model = MIKROTIK_WIRELESS_60G_MODEL
+    ap_ip = str(params.get("ap_ip") or "").strip()
+    st_ip = str(params.get("st_ip") or "").strip()
+    if not ap_ip or not st_ip:
+        raise ValueError("params['ap_ip'] и params['st_ip'] обязательны для Mikrotik Wireless 60G")
+
+    client_ip = str(params.get("client_ip") or "-")
+    client_vlan = str(params.get("client_vlan") or "-")
+    output_dir = params.get("output_dir")
+    output_dir = str(output_dir).strip() if output_dir else None
+
+    rm = params.get("router_model")
+    router_model = str(rm).strip() or None if rm is not None else None
+    ri = params.get("router_ip")
+    router_ip = str(ri).strip() or None if ri is not None else None
+
+    run_params = {
+        "model": model,
+        "equipment_ip": ap_ip,
+        "ap_ip": ap_ip,
+        "st_ip": st_ip,
+        "router_ip": router_ip or "",
+        "client_ip": client_ip,
+        "outer_vlan": "",
+        "vlan": client_vlan,
+        "port": "-",
+        "port_olt": "",
+        "gpon_port": "",
+    }
+
+    all_lines: list[str] = []
+    all_lines.append(f"=== Диагностика клиента | {datetime.now().isoformat()} ===\n")
+    all_lines.append(
+        f"Клиент: {client_ip}  VLAN: {client_vlan}  AP: {ap_ip}  ST: {st_ip}\n"
+    )
+
+    print("--- AP ---")
+    _append_device_section(all_lines, title="AP (точка доступа)", host=ap_ip)
+    all_lines.extend(
+        _run_device_diagnostics_soft(
+            model,
+            ap_ip,
+            {**run_params, "wireless_role": "ap"},
+            unavailable_msg="AP недоступна",
+        )
+    )
+
+    print("--- ST ---")
+    _append_device_section(all_lines, title="ST (абонентская антенна)", host=st_ip)
+    all_lines.extend(
+        _run_device_diagnostics_soft(
+            model,
+            st_ip,
+            {**run_params, "wireless_role": "st"},
+            unavailable_msg="ST недоступна",
+        )
+    )
+
+    if router_model and router_ip:
+        _append_device_section(all_lines, title="Маршрутизатор (подписка клиента)", host=router_ip)
+        try:
+            print("--- Маршрутизатор ---")
+            router_params = {**run_params, "model": router_model}
+            router_lines = _run_device_diagnostics(router_model, router_ip, router_params, read_timeout=120)
+            all_lines.extend(router_lines)
+        except (NetmikoAuthenticationException, NetmikoTimeoutException) as e:
+            all_lines.append(f"\nОшибка подключения (маршрутизатор): {e}\n")
+            raise
+
+    full_output = "\n".join(all_lines)
+    final_path = _write_diagnostics_output(full_output, out_path, output_dir)
+    return full_output, final_path
 
 
 def run_diagnostics(params: dict[str, Any], out_path: str | None = None) -> tuple[str, str]:
@@ -269,6 +402,10 @@ def run_diagnostics(params: dict[str, Any], out_path: str | None = None) -> tupl
 
     :return: пара (полный текст вывода, путь к сохранённому файлу)
     """
+    request_kind = str(params.get("request_kind") or "standard").strip()
+    if request_kind == "mikrotik_wireless_60g":
+        return _run_mikrotik_wireless_60g_diagnostics(params, out_path=out_path)
+
     model = str(params.get("model") or "generic").strip() or "generic"
     equipment_ip = str(params.get("equipment_ip") or "").strip()
     if not equipment_ip:
@@ -333,18 +470,5 @@ def run_diagnostics(params: dict[str, Any], out_path: str | None = None) -> tupl
 
     full_output = "\n".join(all_lines)
 
-    out_dir = output_dir or OUTPUT_DIR
-    os.makedirs(out_dir, exist_ok=True)
-    if out_path:
-        final_path = out_path
-        with open(final_path, "w", encoding="utf-8") as f:
-            f.write(full_output)
-    else:
-        with _OUTPUT_FILE_LOCK:
-            filename = _next_output_filename(out_dir)
-            final_path = os.path.join(out_dir, filename)
-        with open(final_path, "w", encoding="utf-8") as f:
-            f.write(full_output)
-
-    print(f"Вывод сохранён: {final_path}")
+    final_path = _write_diagnostics_output(full_output, out_path, output_dir)
     return full_output, final_path

@@ -1,0 +1,14 @@
+device_type=???
+username=admin
+password=611621
+---
+terminal page-break disable ### не знаю как отобразить данную команду для этого вида оборудования
+system resource print
+interface print stats-detail where name=ether1
+!!!!!!!! КОМАНДЫ ДЛЯ ПЕРЕЗАГРУЗКИ ПОРТА ТОЛЬКО ДЛЯ ST
+###
+interface disable ether1
+interface enable ether1
+###
+interface ethernet print where name=ether1
+interface w60g monitor wlan60-1 once

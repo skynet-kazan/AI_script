@@ -17,7 +17,7 @@ import sys
 HOST = "10.3.1.147"
 PORT = 5000
 
-DEFAULT_REQUEST = "stop"
+DEFAULT_REQUEST = "ZTE C620, 10.127.0.3, cisco_asr1002, nov.loc, 100.96.79.202, o3075, 770, 1/1/9:17"
 
 
 def _read_line(sock: socket.socket, initial: bytes = b"", bufsize: int = 4096) -> tuple[str, bytes]:

@@ -18,26 +18,57 @@ PORT = 5000
 
 # Версия протокола диагностики по TCP. Смените при изменении формата ответов.
 # Проверка с клиента: отправить одну строку «protocol» — в ответ будет diagnostics-tcp-rev-N.
-DIAGNOSTICS_TCP_PROTOCOL_REV = 3
+DIAGNOSTICS_TCP_PROTOCOL_REV = 4
 
 # Команда «stop»: выставляется в потоке клиента; главный поток выходит из accept — процесс завершается без os._exit.
 _shutdown_requested = threading.Event()
 
+MIKROTIK_WIRELESS_60G_MODEL = "mikrotik wireless 60g"
+
 _OUTER_VLAN_FIELD_RE = re.compile(r"^o(\d+)$", re.IGNORECASE)
+_ST_AP_IP_RE = re.compile(r"^(?:ST|AP)\s+(.+)$", re.IGNORECASE)
+
+
+def _parse_role_prefixed_ip(field: str) -> str:
+    """Из поля «ST 10.0.0.1» / «AP 10.0.0.2» извлекает IP."""
+    raw = (field or "").strip()
+    m = _ST_AP_IP_RE.match(raw)
+    return m.group(1).strip() if m else raw
 
 
 def _parse_diagnostic_request(parts: list[str]) -> dict[str, str]:
     """
     Разбор TCP-запроса диагностики.
 
-    Без OuterVlan (7 полей):
+    Mikrotik Wireless 60G (7 полей):
+      model, ST <ip>, AP <ip>, router_model, router_ip, client_ip, vlan
+
+    Стандарт без OuterVlan (7 полей):
       model, equipment_ip, router_model, router_ip, client_ip, vlan, port
 
-    С OuterVlan (8 полей, поле oNNNN перед основным VLAN):
+    Стандарт с OuterVlan (8 полей, поле oNNNN перед основным VLAN):
       model, equipment_ip, router_model, router_ip, client_ip, o3001, vlan, port
     """
     while len(parts) < 7:
         parts.append("")
+
+    model = parts[0].strip() or "generic"
+    if model.lower() == MIKROTIK_WIRELESS_60G_MODEL:
+        st_ip = _parse_role_prefixed_ip(parts[1])
+        ap_ip = _parse_role_prefixed_ip(parts[2])
+        return {
+            "model": model,
+            "request_kind": "mikrotik_wireless_60g",
+            "st_ip": st_ip,
+            "ap_ip": ap_ip,
+            "equipment_ip": ap_ip,
+            "router_model": parts[3].strip(),
+            "router_ip": parts[4].strip(),
+            "client_ip": parts[5].strip() or "-",
+            "client_vlan": parts[6].strip() or "-",
+            "outer_vlan": "",
+            "port": "-",
+        }
 
     outer_vlan = ""
     field5 = parts[5].strip()
@@ -50,7 +81,10 @@ def _parse_diagnostic_request(parts: list[str]) -> dict[str, str]:
         port = parts[6].strip() or "-"
 
     return {
-        "model": parts[0].strip() or "generic",
+        "model": model,
+        "request_kind": "standard",
+        "st_ip": "",
+        "ap_ip": "",
         "equipment_ip": parts[1].strip(),
         "router_model": parts[2].strip(),
         "router_ip": parts[3].strip(),
@@ -81,10 +115,17 @@ def _normalize_target_key(host: str) -> str:
     return (host or "").strip().lower()
 
 
-def _diagnostic_target_ips(equipment_ip: str, router_ip: Optional[str]) -> FrozenSet[str]:
-    ips: set[str] = {_normalize_target_key(equipment_ip)}
-    if router_ip and str(router_ip).strip():
-        ips.add(_normalize_target_key(str(router_ip)))
+def _diagnostic_target_ips(
+    equipment_ip: str,
+    router_ip: Optional[str],
+    *,
+    ap_ip: Optional[str] = None,
+    st_ip: Optional[str] = None,
+) -> FrozenSet[str]:
+    ips: set[str] = set()
+    for host in (equipment_ip, router_ip, ap_ip, st_ip):
+        if host and str(host).strip():
+            ips.add(_normalize_target_key(str(host)))
     return frozenset(ips)
 
 
@@ -227,8 +268,16 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
         parts = [p.strip() for p in line.split(",")]
         params = _parse_diagnostic_request(parts)
         model = params["model"]
-        equipment_ip = params["equipment_ip"]
-        if not equipment_ip:
+        request_kind = params.get("request_kind", "standard")
+        st_ip = params.get("st_ip", "").strip()
+        ap_ip = params.get("ap_ip", "").strip()
+        equipment_ip = params.get("equipment_ip", "").strip()
+
+        if request_kind == "mikrotik_wireless_60g":
+            if not ap_ip or not st_ip:
+                _send_response(conn, b"ERROR: AP and ST IP are required for Mikrotik Wireless 60G\n", addr)
+                return
+        elif not equipment_ip:
             _send_response(conn, b"ERROR: equipment_ip is required\n", addr)
             return
 
@@ -240,7 +289,12 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
         client_vlan = params["client_vlan"]
         port = params["port"]
 
-        target_ips = _diagnostic_target_ips(equipment_ip, router_ip)
+        target_ips = _diagnostic_target_ips(
+            equipment_ip,
+            router_ip,
+            ap_ip=ap_ip or None,
+            st_ip=st_ip or None,
+        )
         immediate, ticket, position, wait_ev = _enqueue_or_acquire_ips(target_ips)
 
         log_id, out_path = reserve_diagnostics_output_file()
@@ -259,17 +313,24 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
 
         reserved_ips = target_ips
 
+        if request_kind == "mikrotik_wireless_60g":
+            target_info = f"AP={ap_ip}, ST={st_ip}, router={router_ip or '-'}"
+        else:
+            target_info = f"equipment={equipment_ip}, router={router_ip or '-'}"
         outer_info = f", outer_vlan={outer_vlan}" if outer_vlan else ""
         print(
-            f"[{addr}] Подключение успешно. log_id={log_id} Параметры: equipment={equipment_ip}, "
-            f"router={router_ip or '-'}, vlan={client_vlan}{outer_info}, port={port}"
+            f"[{addr}] Подключение успешно. log_id={log_id} Параметры: {target_info}, "
+            f"vlan={client_vlan}{outer_info}, port={port}"
         )
         print(f"[{addr}] Запуск диагностики...")
 
         full_output, out_path = run_diagnostics(
             {
                 "model": model,
+                "request_kind": request_kind,
                 "equipment_ip": equipment_ip,
+                "st_ip": st_ip,
+                "ap_ip": ap_ip,
                 "client_ip": client_ip,
                 "outer_vlan": outer_vlan,
                 "client_vlan": client_vlan,
