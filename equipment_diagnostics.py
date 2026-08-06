@@ -30,6 +30,7 @@ from model_diagnostics_algorithm import (
     diagnostics_iscom2624g_4ge_ac,
     diagnostics_iscom_5508_olt_gp4a,
     diagnostics_mikrotik_wireless_60g,
+    diagnostics_nanostation_m2,
     diagnostics_rb941,
     diagnostics_snr_s2960_24g,
     diagnostics_snr_s2985g_24t,
@@ -52,12 +53,20 @@ _OUTER_VLAN_EQUIPMENT_MODELS = frozenset({
 
 MIKROTIK_WIRELESS_60G_MODEL = "Mikrotik Wireless 60G"
 MIKROTIK_WIRELESS_60G_SCENARIO = "Mikrotik_Wireless_60G"
+NANOSTATION_M2_MODEL = "Nanostation M2"
+NANOSTATION_M2_SCENARIO = "Nanostation M2"
+POWERBEAM_M2_400_MODEL = "PowerBeam M2-400"
+
+_WIRELESS_AP_ST_SCENARIO_ALIASES: dict[str, str] = {
+    MIKROTIK_WIRELESS_60G_MODEL: MIKROTIK_WIRELESS_60G_SCENARIO,
+    POWERBEAM_M2_400_MODEL: NANOSTATION_M2_SCENARIO,
+}
 
 
 def _scenario_basename_for_model(model_for_filename: str, outer_vlan: str) -> str:
-    """Для BDCOM/ZTE с OuterVlan используется сценарий с суффиксом «o» в имени файла."""
-    if model_for_filename == MIKROTIK_WIRELESS_60G_MODEL:
-        return MIKROTIK_WIRELESS_60G_SCENARIO
+    """Для BDCOM/ZTE с OuterVlan — суффикс «o»; для AP/ST — алиасы сценариев."""
+    if model_for_filename in _WIRELESS_AP_ST_SCENARIO_ALIASES:
+        return _WIRELESS_AP_ST_SCENARIO_ALIASES[model_for_filename]
     if outer_vlan and model_for_filename in _OUTER_VLAN_EQUIPMENT_MODELS:
         return f"{model_for_filename}o"
     return model_for_filename
@@ -279,6 +288,8 @@ def _run_device_diagnostics(
                     body_lines = diagnostics_rb941(conn, connect_ctx, commands_ctx)
                 case "Mikrotik Wireless 60G":
                     body_lines = diagnostics_mikrotik_wireless_60g(conn, connect_ctx, commands_ctx)
+                case "Nanostation M2" | "PowerBeam M2-400":
+                    body_lines = diagnostics_nanostation_m2(conn, connect_ctx, commands_ctx)
                 case "ZTE C620":
                     body_lines = diagnostics_zte_c620(conn, connect_ctx, commands_ctx)
                 case "ZTE C320":
@@ -306,16 +317,18 @@ def _run_device_diagnostics(
     return [session_header, *body_lines]
 
 
-def _run_mikrotik_wireless_60g_diagnostics(
+def _run_wireless_ap_st_diagnostics(
     params: dict[str, Any],
     out_path: str | None = None,
 ) -> tuple[str, str]:
-    """Диагностика Mikrotik Wireless 60G: AP, ST (мягкий fail), затем маршрутизатор."""
-    model = MIKROTIK_WIRELESS_60G_MODEL
+    """Диагностика AP/ST-антенн: AP, ST (мягкий fail), затем маршрутизатор."""
+    model = str(params.get("model") or "").strip()
+    if not model:
+        raise ValueError("params['model'] обязателен для wireless AP/ST диагностики")
     ap_ip = str(params.get("ap_ip") or "").strip()
     st_ip = str(params.get("st_ip") or "").strip()
     if not ap_ip or not st_ip:
-        raise ValueError("params['ap_ip'] и params['st_ip'] обязательны для Mikrotik Wireless 60G")
+        raise ValueError("params['ap_ip'] и params['st_ip'] обязательны для wireless AP/ST диагностики")
 
     client_ip = str(params.get("client_ip") or "-")
     client_vlan = str(params.get("client_vlan") or "-")
@@ -344,7 +357,7 @@ def _run_mikrotik_wireless_60g_diagnostics(
     all_lines: list[str] = []
     all_lines.append(f"=== Диагностика клиента | {datetime.now().isoformat()} ===\n")
     all_lines.append(
-        f"Клиент: {client_ip}  VLAN: {client_vlan}  AP: {ap_ip}  ST: {st_ip}\n"
+        f"Модель: {model}  Клиент: {client_ip}  VLAN: {client_vlan}  AP: {ap_ip}  ST: {st_ip}\n"
     )
 
     print("--- AP ---")
@@ -403,8 +416,8 @@ def run_diagnostics(params: dict[str, Any], out_path: str | None = None) -> tupl
     :return: пара (полный текст вывода, путь к сохранённому файлу)
     """
     request_kind = str(params.get("request_kind") or "standard").strip()
-    if request_kind == "mikrotik_wireless_60g":
-        return _run_mikrotik_wireless_60g_diagnostics(params, out_path=out_path)
+    if request_kind == "wireless_ap_st":
+        return _run_wireless_ap_st_diagnostics(params, out_path=out_path)
 
     model = str(params.get("model") or "generic").strip() or "generic"
     equipment_ip = str(params.get("equipment_ip") or "").strip()

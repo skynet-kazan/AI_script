@@ -18,29 +18,37 @@ PORT = 5000
 
 # Версия протокола диагностики по TCP. Смените при изменении формата ответов.
 # Проверка с клиента: отправить одну строку «protocol» — в ответ будет diagnostics-tcp-rev-N.
-DIAGNOSTICS_TCP_PROTOCOL_REV = 4
+DIAGNOSTICS_TCP_PROTOCOL_REV = 5
 
 # Команда «stop»: выставляется в потоке клиента; главный поток выходит из accept — процесс завершается без os._exit.
 _shutdown_requested = threading.Event()
 
-MIKROTIK_WIRELESS_60G_MODEL = "mikrotik wireless 60g"
-
 _OUTER_VLAN_FIELD_RE = re.compile(r"^o(\d+)$", re.IGNORECASE)
-_ST_AP_IP_RE = re.compile(r"^(?:ST|AP)\s+(.+)$", re.IGNORECASE)
+_ST_IP_RE = re.compile(r"^ST\s+(.+)$", re.IGNORECASE)
+_AP_IP_RE = re.compile(r"^AP\s+(.+)$", re.IGNORECASE)
 
 
 def _parse_role_prefixed_ip(field: str) -> str:
     """Из поля «ST 10.0.0.1» / «AP 10.0.0.2» извлекает IP."""
     raw = (field or "").strip()
-    m = _ST_AP_IP_RE.match(raw)
-    return m.group(1).strip() if m else raw
+    for pattern in (_ST_IP_RE, _AP_IP_RE):
+        if m := pattern.match(raw):
+            return m.group(1).strip()
+    return raw
+
+
+def _is_wireless_ap_st_request(parts: list[str]) -> bool:
+    """Формат: model, ST <ip>, AP <ip>, router_model, router_ip, client_ip, vlan."""
+    if len(parts) < 7:
+        return False
+    return bool(_ST_IP_RE.match(parts[1].strip())) and bool(_AP_IP_RE.match(parts[2].strip()))
 
 
 def _parse_diagnostic_request(parts: list[str]) -> dict[str, str]:
     """
     Разбор TCP-запроса диагностики.
 
-    Mikrotik Wireless 60G (7 полей):
+    Mikrotik Wireless 60G / Nanostation M2 / PowerBeam M2-400 (7 полей):
       model, ST <ip>, AP <ip>, router_model, router_ip, client_ip, vlan
 
     Стандарт без OuterVlan (7 полей):
@@ -53,12 +61,12 @@ def _parse_diagnostic_request(parts: list[str]) -> dict[str, str]:
         parts.append("")
 
     model = parts[0].strip() or "generic"
-    if model.lower() == MIKROTIK_WIRELESS_60G_MODEL:
+    if _is_wireless_ap_st_request(parts):
         st_ip = _parse_role_prefixed_ip(parts[1])
         ap_ip = _parse_role_prefixed_ip(parts[2])
         return {
             "model": model,
-            "request_kind": "mikrotik_wireless_60g",
+            "request_kind": "wireless_ap_st",
             "st_ip": st_ip,
             "ap_ip": ap_ip,
             "equipment_ip": ap_ip,
@@ -273,9 +281,9 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
         ap_ip = params.get("ap_ip", "").strip()
         equipment_ip = params.get("equipment_ip", "").strip()
 
-        if request_kind == "mikrotik_wireless_60g":
+        if request_kind == "wireless_ap_st":
             if not ap_ip or not st_ip:
-                _send_response(conn, b"ERROR: AP and ST IP are required for Mikrotik Wireless 60G\n", addr)
+                _send_response(conn, b"ERROR: AP and ST IP are required for wireless AP/ST diagnostics\n", addr)
                 return
         elif not equipment_ip:
             _send_response(conn, b"ERROR: equipment_ip is required\n", addr)
@@ -313,8 +321,8 @@ def _handle_client(conn: socket.socket, addr: Tuple[str, int]) -> None:
 
         reserved_ips = target_ips
 
-        if request_kind == "mikrotik_wireless_60g":
-            target_info = f"AP={ap_ip}, ST={st_ip}, router={router_ip or '-'}"
+        if request_kind == "wireless_ap_st":
+            target_info = f"model={model}, AP={ap_ip}, ST={st_ip}, router={router_ip or '-'}"
         else:
             target_info = f"equipment={equipment_ip}, router={router_ip or '-'}"
         outer_info = f", outer_vlan={outer_vlan}" if outer_vlan else ""

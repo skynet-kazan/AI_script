@@ -521,6 +521,10 @@ def diagnostics_rb941(conn: Any, connect_ctx: dict[str, Any], commands_ctx: dict
     return lines
 
 
+def diagnostics_nanostation_m2(conn: Any, connect_ctx: dict[str, Any], commands_ctx: dict[str, Any]) -> list[str]:
+    return _commands_loop_default(conn, connect_ctx, commands_ctx)
+
+
 def diagnostics_mikrotik_wireless_60g(conn: Any, connect_ctx: dict[str, Any], commands_ctx: dict[str, Any]) -> list[str]:
     host = connect_ctx["host"]
     device_type = connect_ctx["device_type"]

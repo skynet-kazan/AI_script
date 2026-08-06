@@ -1,0 +1,5 @@
+device_type=generic
+username=ubnt
+password=611621
+---
+mca-status | grep -Ew "freq|signal|noise|ccq|uptime|lanRxErrors|lanTxErrors|lanPlugged|lanSpeed"
