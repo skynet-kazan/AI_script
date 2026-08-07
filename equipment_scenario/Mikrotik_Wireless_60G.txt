@@ -4,9 +4,14 @@ password=611621
 ---
 system resource print
 interface print stats-detail where name=ether1
+@ap_only
+interface ethernet print where name=ether1
+interface ethernet monitor ether1 once
+@end_ap_only
 @st_only
 interface disable ether1
 interface enable ether1
-@end_st_only
 interface ethernet print where name=ether1
+interface ethernet monitor ether1 once
+@end_st_only
 interface w60g monitor wlan60-1 once

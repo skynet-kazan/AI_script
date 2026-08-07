@@ -534,6 +534,7 @@ def diagnostics_mikrotik_wireless_60g(conn: Any, connect_ctx: dict[str, Any], co
     role = str(commands_ctx["run_params"].get("wireless_role") or "").strip().lower()
     lines: list[str] = []
     st_only = False
+    ap_only = False
 
     for cmd in commands_ctx["commands"]:
         stripped = cmd.strip()
@@ -543,7 +544,15 @@ def diagnostics_mikrotik_wireless_60g(conn: Any, connect_ctx: dict[str, Any], co
         if stripped == "@end_st_only":
             st_only = False
             continue
+        if stripped == "@ap_only":
+            ap_only = True
+            continue
+        if stripped == "@end_ap_only":
+            ap_only = False
+            continue
         if st_only and role != "st":
+            continue
+        if ap_only and role != "ap":
             continue
 
         print(f"  [{host}] Команда: {cmd}")

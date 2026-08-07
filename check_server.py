@@ -17,7 +17,7 @@ import sys
 HOST = "10.3.1.147"
 PORT = 5000
 
-DEFAULT_REQUEST = "Mikrotik Wireless 60G, ST 10.147.0.80, AP 10.147.0.72, cisco_asr1002, cet.loc, 172.200.75.38, 3560"
+DEFAULT_REQUEST = "PowerBeam M2-400, ST 10.140.0.167, AP 10.140.0.168, cisco_asr1002, zor.loc, 2.56.180.112, 2887"
 
 
 def _read_line(sock: socket.socket, initial: bytes = b"", bufsize: int = 4096) -> tuple[str, bytes]:
