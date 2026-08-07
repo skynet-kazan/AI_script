@@ -11,6 +11,7 @@ interface ethernet monitor ether1 once
 @st_only
 interface disable ether1
 interface enable ether1
+@sleep 5
 interface ethernet print where name=ether1
 interface ethernet monitor ether1 once
 @end_st_only

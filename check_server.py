@@ -17,7 +17,7 @@ import sys
 HOST = "10.3.1.147"
 PORT = 5000
 
-DEFAULT_REQUEST = "PowerBeam M2-400, ST 10.140.0.167, AP 10.140.0.168, cisco_asr1002, zor.loc, 2.56.180.112, 2887"
+DEFAULT_REQUEST = "RB941, 10.139.0.202, cisco_asr1002, rod.loc, 100.96.127.246, 960, 2"
 
 
 def _read_line(sock: socket.socket, initial: bytes = b"", bufsize: int = 4096) -> tuple[str, bytes]:

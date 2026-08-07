@@ -555,6 +555,15 @@ def diagnostics_mikrotik_wireless_60g(conn: Any, connect_ctx: dict[str, Any], co
         if ap_only and role != "ap":
             continue
 
+        if stripped.startswith("@sleep"):
+            parts = stripped.split()
+            delay = float(parts[1]) if len(parts) >= 2 else 0.0
+            if delay > 0:
+                print(f"  [{host}] Пауза {delay} сек.")
+                lines.append(f"\n--- Пауза {delay} сек. ---\n")
+                time.sleep(delay)
+            continue
+
         print(f"  [{host}] Команда: {cmd}")
         lines.append(f"\n--- Команда: {cmd} ---\n")
         out = netmiko_send_adaptive(
